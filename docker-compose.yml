@@ -13,10 +13,27 @@ services:
       - nats
     environment:
       NATS_URL: nats://nats:4222
+    command: ["--seed", "10"]
     develop:
       watch:
         - action: rebuild
           path: ./engine/Engine
+        - action: rebuild
+          path: ./engine/Core
+
+  movement-system:
+    build:
+      context: .
+      dockerfile: examples/MovementSystem/Dockerfile
+    depends_on:
+      - nats
+      - engine
+    environment:
+      NATS_URL: nats://nats:4222
+    develop:
+      watch:
+        - action: rebuild
+          path: ./examples/MovementSystem
 
   editor-backend:
     build:
