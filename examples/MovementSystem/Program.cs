@@ -12,6 +12,8 @@ await nats.ConnectAsync();
 
 Console.WriteLine($"Connected to NATS at {natsUrl}");
 
+var tickCount = 0ul;
+
 var runner = new SystemRunner(
     systemName: "Movement",
     nats: nats,
@@ -39,6 +41,17 @@ var runner = new SystemRunner(
                     pos.Y + vel.Y * dt,
                     pos.Z + vel.Z * dt);
                 buffer.SetComponent(entity, newPos);
+            }
+        }
+
+        tickCount++;
+        if (tickCount % 20 == 0)
+        {
+            var sample = buffer.GetComponents<Position>();
+            if (sample.Length > 0)
+            {
+                var (e, p) = sample[0];
+                Console.WriteLine($"[Movement] Tick {tickCount} | Entity {e.Id} Position: ({p.X:F2}, {p.Y:F2}, {p.Z:F2})");
             }
         }
 
