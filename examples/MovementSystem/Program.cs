@@ -1,9 +1,12 @@
 using Client;
 using Engine.Core;
+using Engine.Core.Messages;
 using Examples.Components;
+using MessagePack;
 using NATS.Client.Core;
 
 var natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+var entityCount = int.TryParse(Environment.GetEnvironmentVariable("SEED_ENTITIES"), out var ec) ? ec : 10;
 
 Console.WriteLine("MovementSystem starting...");
 
@@ -11,6 +14,22 @@ await using var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
 await nats.ConnectAsync();
 
 Console.WriteLine($"Connected to NATS at {natsUrl}");
+
+// Spawn entities via the coordinator
+Console.WriteLine($"[Movement] Requesting {entityCount} entities...");
+for (var i = 0; i < entityCount; i++)
+{
+    var spawnReq = new EntitySpawnRequest
+    {
+        ComponentTypes = [ComponentTypeId.Of<Position>().TypeName, ComponentTypeId.Of<Velocity>().TypeName],
+        ComponentData = [
+            MessagePackSerializer.Serialize(new Position(0f, 0f, 0f)),
+            MessagePackSerializer.Serialize(new Velocity(1f, 0.5f, 0.25f))
+        ]
+    };
+    await nats.PublishAsync("engine.entity.spawn.request", MessagePackSerializer.Serialize(spawnReq));
+}
+Console.WriteLine($"[Movement] Spawn requests sent.");
 
 var tickCount = 0ul;
 

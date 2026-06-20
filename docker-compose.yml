@@ -13,7 +13,6 @@ services:
       - nats
     environment:
       NATS_URL: nats://nats:4222
-    command: ["--seed", "10"]
     develop:
       watch:
         - action: rebuild
