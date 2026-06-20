@@ -21,21 +21,34 @@ public class NatsHandlers
         _pendingSpawns = pendingSpawns;
     }
 
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes when all subscriptions are active.
+    /// </summary>
+    public Task Ready => _ready.Task;
+
     /// <summary>
     /// Starts all background NATS subscriptions. Returns when cancelled.
     /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var regTask = SubscribeRegistrations(cancellationToken);
-        var unregTask = SubscribeUnregistrations(cancellationToken);
-        var spawnTask = SubscribeSpawnRequests(cancellationToken);
+        var regSub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.register", cancellationToken: cancellationToken);
+        var unregSub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.unregister", cancellationToken: cancellationToken);
+        var spawnSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.spawn.request", cancellationToken: cancellationToken);
+
+        _ready.TrySetResult();
+        Console.WriteLine("[Coordinator] NATS subscriptions active.");
+
+        var regTask = ProcessRegistrations(regSub, cancellationToken);
+        var unregTask = ProcessUnregistrations(unregSub, cancellationToken);
+        var spawnTask = ProcessSpawnRequests(spawnSub, cancellationToken);
 
         await Task.WhenAll(regTask, unregTask, spawnTask);
     }
 
-    private async Task SubscribeRegistrations(CancellationToken cancellationToken)
+    private async Task ProcessRegistrations(INatsSub<byte[]> sub, CancellationToken cancellationToken)
     {
-        var sub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.register", cancellationToken: cancellationToken);
         await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
         {
             try
@@ -50,9 +63,8 @@ public class NatsHandlers
         }
     }
 
-    private async Task SubscribeUnregistrations(CancellationToken cancellationToken)
+    private async Task ProcessUnregistrations(INatsSub<byte[]> sub, CancellationToken cancellationToken)
     {
-        var sub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.unregister", cancellationToken: cancellationToken);
         await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
         {
             try
@@ -67,9 +79,8 @@ public class NatsHandlers
         }
     }
 
-    private async Task SubscribeSpawnRequests(CancellationToken cancellationToken)
+    private async Task ProcessSpawnRequests(INatsSub<byte[]> sub, CancellationToken cancellationToken)
     {
-        var sub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.spawn.request", cancellationToken: cancellationToken);
         await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
         {
             try

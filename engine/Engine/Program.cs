@@ -25,9 +25,10 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
-// Start NATS subscription handlers in background
+// Start NATS subscription handlers and wait until they're active
 var handlers = new NatsHandlers(nats, registry, pendingSpawns);
 _ = Task.Run(() => handlers.StartAsync(cts.Token), cts.Token);
+await handlers.Ready;
 
 // Run tick loop
 var tickLoop = new TickLoop(nats, world, registry, pendingSpawns, tickRate);

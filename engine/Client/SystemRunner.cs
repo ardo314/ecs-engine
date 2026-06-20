@@ -38,7 +38,7 @@ public class SystemRunner
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        // Register with coordinator
+        // Register with coordinator (re-publish periodically to survive startup race)
         var descriptor = new SystemDescriptor
         {
             Name = _systemName,
@@ -46,12 +46,21 @@ public class SystemRunner
             Reads = _reads,
             Writes = _writes
         };
-        await _nats.PublishAsync(
-            "engine.system.register",
-            MessagePackSerializer.Serialize(descriptor),
-            cancellationToken: cancellationToken);
+        var registrationBytes = MessagePackSerializer.Serialize(descriptor);
 
-        Console.WriteLine($"[{_systemName}] Registered (instance {_instanceId}). Reads: [{string.Join(", ", _reads)}], Writes: [{string.Join(", ", _writes)}]");
+        // Publish registration on a timer until we receive our first schedule
+        using var regCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _ = Task.Run(async () =>
+        {
+            while (!regCts.Token.IsCancellationRequested)
+            {
+                await _nats.PublishAsync("engine.system.register", registrationBytes, cancellationToken: regCts.Token);
+                try { await Task.Delay(1000, regCts.Token); }
+                catch (OperationCanceledException) { break; }
+            }
+        }, regCts.Token);
+
+        Console.WriteLine($"[{_systemName}] Registering (instance {_instanceId}). Reads: [{string.Join(", ", _reads)}], Writes: [{string.Join(", ", _writes)}]");
 
         // Subscribe to schedule messages
         var scheduleSub = await _nats.SubscribeCoreAsync<byte[]>(
@@ -66,11 +75,19 @@ public class SystemRunner
             cancellationToken: cancellationToken);
 
         var buffer = new ComponentBuffer();
+        var firstSchedule = true;
 
         try
         {
             await foreach (var schedMsg in scheduleSub.Msgs.ReadAllAsync(cancellationToken))
             {
+                if (firstSchedule)
+                {
+                    firstSchedule = false;
+                    await regCts.CancelAsync();
+                    Console.WriteLine($"[{_systemName}] Registered successfully — receiving ticks.");
+                }
+
                 var schedule = MessagePackSerializer.Deserialize<SystemSchedule>(schedMsg.Data!);
                 buffer.Clear();
                 buffer.SetTickId(schedule.TickId);
