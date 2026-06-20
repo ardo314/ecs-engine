@@ -1,6 +1,6 @@
 # Examples
 
-This directory will contain example components and systems built with the EngineClient SDK.
+This directory will contain example components and systems built with the Client SDK.
 
 ## Planned Examples
 
@@ -10,7 +10,7 @@ This directory will contain example components and systems built with the Engine
 
 ## Running Examples
 
-Examples are C# console applications that use the `EngineClient` library to connect to the coordinator via NATS.
+Examples are C# console applications that use the `Client` library to connect to the coordinator via NATS.
 
 ```bash
 # From devcontainer:

@@ -7,7 +7,7 @@ A distributed Entity Component System engine built with C# (.NET 9) and NATS.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 - **Engine** — Coordinator that owns world state, schedules systems, and brokers data via NATS.
-- **EngineClient** — C# SDK for writing system processes that connect to the coordinator.
+- **Client** — C# SDK (class library in the engine solution) for writing system processes.
 - **Editor** — React web app + ASP.NET Core backend for real-time entity/component inspection.
 
 ## Prerequisites
@@ -25,7 +25,6 @@ All tooling (.NET 9 SDK, Node.js 22, NATS server) is provided by the dev contain
 
 ```bash
 dotnet build engine/Engine.sln
-dotnet build clients/csharp/EngineClient.sln
 dotnet build editor/backend/EditorBackend.sln
 cd editor/frontend && npm install && npm run build
 ```
@@ -39,8 +38,9 @@ dotnet run --project engine/Engine
 ## Project Structure
 
 ```
-engine/              — Coordinator (C# console app)
-clients/csharp/      — System-authoring SDK (C# class library)
+engine/              — C# solution: Coordinator + Client SDK
+  Engine/            — Coordinator console app
+  Client/            — System-authoring SDK (class library)
 editor/frontend/     — React + TypeScript + Vite web app
 editor/backend/      — ASP.NET Core Minimal API (WebSocket bridge to NATS)
 examples/            — Example components and systems

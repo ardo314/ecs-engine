@@ -16,7 +16,7 @@ Key concepts:
 - **Coordinator** (`engine/`) — single authority for world state.
 - **Systems** — stateless processes, each running exactly one system function.
 - **NATS** — message transport between coordinator, systems, and editor.
-- **EngineClient** (`clients/csharp/`) — SDK for authoring systems that
+- **Client** (`engine/Client/`) — SDK for authoring systems that
   connect to the coordinator via NATS.
 
 ---
@@ -25,15 +25,14 @@ Key concepts:
 
 ```
 ecs-engine/
-├── engine/                     # C# solution — Coordinator
+├── engine/                     # C# solution — Coordinator + Client SDK
 │   ├── Engine.sln
-│   └── Engine/
-│       ├── Engine.csproj
-│       └── Program.cs
-├── clients/
-│   └── csharp/                 # System-authoring SDK (class library)
-│       ├── EngineClient.sln
-│       └── EngineClient/
+│   ├── Engine/
+│   │   ├── Engine.csproj
+│   │   └── Program.cs
+│   └── Client/                 # System-authoring SDK (class library)
+│       ├── Client.csproj
+│       └── SystemRunner.cs
 ├── editor/
 │   ├── frontend/               # React + Vite web app
 │   └── backend/                # ASP.NET Core Minimal API
@@ -141,7 +140,6 @@ All building and testing should happen inside the dev container:
 ```bash
 # Build everything
 dotnet build engine/Engine.sln
-dotnet build clients/csharp/EngineClient.sln
 dotnet build editor/backend/EditorBackend.sln
 cd editor/frontend && npm run build
 

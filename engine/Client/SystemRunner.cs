@@ -1,6 +1,6 @@
 using NATS.Client.Core;
 
-namespace EngineClient;
+namespace Client;
 
 /// <summary>
 /// Connects to the engine coordinator via NATS and runs a system function each tick.

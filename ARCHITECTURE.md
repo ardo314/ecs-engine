@@ -95,17 +95,14 @@ data dependencies and schedule systems with maximum parallelism.
 
 ```
 ecs-engine/
-├── engine/                     # C# solution — Coordinator
+├── engine/                     # C# solution — Coordinator + Client SDK
 │   ├── Engine.sln
-│   └── Engine/
-│       ├── Engine.csproj
-│       └── Program.cs
-├── clients/
-│   └── csharp/                 # System-authoring SDK (class library)
-│       ├── EngineClient.sln
-│       └── EngineClient/
-│           ├── EngineClient.csproj
-│           └── SystemRunner.cs
+│   ├── Engine/
+│   │   ├── Engine.csproj
+│   │   └── Program.cs
+│   └── Client/                 # System-authoring SDK (class library)
+│       ├── Client.csproj
+│       └── SystemRunner.cs
 ├── editor/
 │   ├── frontend/               # React + Vite web app
 │   │   ├── package.json
