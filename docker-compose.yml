@@ -1,0 +1,47 @@
+services:
+  nats:
+    image: nats:2.10
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  engine:
+    build:
+      context: ./engine
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: nats://nats:4222
+    develop:
+      watch:
+        - action: rebuild
+          path: ./engine/Engine
+
+  editor-backend:
+    build:
+      context: ./editor/backend
+    depends_on:
+      - nats
+    ports:
+      - "5000:5000"
+    environment:
+      NATS_URL: nats://nats:4222
+    develop:
+      watch:
+        - action: rebuild
+          path: ./editor/backend/EditorBackend
+
+  editor-frontend:
+    build:
+      context: ./editor/frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - editor-backend
+    develop:
+      watch:
+        - action: rebuild
+          path: ./editor/frontend/src
+        - action: rebuild
+          path: ./editor/frontend/package.json
