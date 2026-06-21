@@ -141,8 +141,11 @@ cluster.
 | `engine.system.unregister`          | System → Coordinator    | `SystemUnregister { Name, InstanceId }`         | System unregisters on shutdown.                   |
 | `engine.system.schedule.<system>`   | Coordinator → System(s) | `SystemSchedule { TickId, ShardRange }`         | Tells system to execute on a shard.               |
 | `engine.system.heartbeat`           | Systems → Coordinator   | `Heartbeat { InstanceId, System, Load }`        | Periodic health & load report.                    |
-| `engine.query.request`              | Any → Coordinator       | `QueryRequest { Query }`                        | Ad-hoc query (e.g. from editor).                  |
-| `engine.query.response`             | Coordinator → Requester | `QueryResponse { Entities, Shards }`            | Response to an ad-hoc query.                      |
+| `engine.query.systems`              | Any → Coordinator       | (empty)                                          | Request/reply: returns registered systems + stages. |
+| `engine.query.entities`             | Any → Coordinator       | `QueryEntitiesRequest { ComponentFilter? }`     | Request/reply: returns matching entities + data.  |
+| `engine.watch.subscribe`            | Any → Coordinator       | `WatchRequest { WatchId, Include*, Filter }`    | Request/reply: register a watch subscription.     |
+| `engine.watch.unsubscribe`          | Any → Coordinator       | `WatchCancel { WatchId }`                       | Cancels an active watch subscription.             |
+| `engine.watch.data.<watchId>`       | Coordinator → Watcher   | `WatchData { TickId, Systems?, Entities? }`     | Per-tick data pushed to an active watcher.        |
 
 > JetStream is used for `engine.component.*` subjects so that late-joining
 > system instances can replay the latest state.
@@ -188,13 +191,33 @@ them.
 
 ## Editor Integration
 
-The editor backend connects to NATS and bridges queries/commands to the React
-frontend over WebSocket. This allows the editor to:
+The editor backend connects to NATS and bridges state to the React frontend
+over WebSocket using the coordinator's generic query/watch APIs. The coordinator
+has no knowledge of the editor — it only exposes generic NATS endpoints.
 
-- **Inspect** entities and components in real-time via `engine.query.request`.
-- **Modify** components by publishing `engine.component.changed.*`.
-- **Create / destroy** entities by sending commands to the coordinator.
-- **Observe** the system schedule and per-system load.
+### Query APIs (request/reply)
+
+- **`engine.query.systems`** — returns all registered systems with their
+  read/write declarations and computed execution stages.
+- **`engine.query.entities`** — returns entities with component data. Accepts
+  an optional `ComponentFilter` to narrow results.
+
+### Watch API (subscription)
+
+1. Client sends a `WatchRequest` to `engine.watch.subscribe` specifying what
+   to include (systems, entities, optional component filter) and a `WatchId`.
+2. Coordinator replies with a `WatchResponse` containing the `DataSubject`
+   (`engine.watch.data.<watchId>`) to subscribe to.
+3. At the end of each tick, the coordinator publishes `WatchData` to the
+   watcher's data subject. Systems/stages are only included when they change.
+4. Client sends `WatchCancel` to `engine.watch.unsubscribe` to stop.
+
+The editor uses this to provide:
+
+- **Real-time entity inspection** with deserialized component field values.
+- **System schedule view** showing systems grouped by execution stage with
+  their read/write component queries.
+- **Live tick counter** showing the current simulation tick.
 
 ---
 

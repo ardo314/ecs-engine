@@ -83,4 +83,13 @@ public class WorldState
     }
 
     public int EntityCount => _alive.Count;
+
+    public IReadOnlyCollection<ulong> GetAllEntities() => _alive;
+
+    public IReadOnlyDictionary<string, byte[]>? GetAllComponents(ulong entityId)
+    {
+        if (_components.TryGetValue(entityId, out var bag))
+            return bag;
+        return null;
+    }
 }

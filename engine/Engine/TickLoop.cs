@@ -13,6 +13,8 @@ public class TickLoop
     private readonly NatsConnection _nats;
     private readonly WorldState _world;
     private readonly SystemRegistry _registry;
+    private readonly WatchManager _watchManager;
+    private readonly NatsHandlers _handlers;
     private readonly ConcurrentQueue<EntitySpawnRequest> _pendingSpawns;
     private readonly int _tickRate;
 
@@ -20,12 +22,16 @@ public class TickLoop
         NatsConnection nats,
         WorldState world,
         SystemRegistry registry,
+        WatchManager watchManager,
+        NatsHandlers handlers,
         ConcurrentQueue<EntitySpawnRequest> pendingSpawns,
         int tickRate)
     {
         _nats = nats;
         _world = world;
         _registry = registry;
+        _watchManager = watchManager;
+        _handlers = handlers;
         _pendingSpawns = pendingSpawns;
         _tickRate = tickRate;
     }
@@ -55,6 +61,8 @@ public class TickLoop
             {
                 Console.WriteLine($"[Coordinator] Tick {tickId} complete. Entities: {_world.EntityCount}, Systems: {_registry.GetSystemNames().Count}");
             }
+
+            await PushWatchData(tickId, cancellationToken);
 
             var elapsed = DateTime.UtcNow - tickStart;
             var sleepTime = tickInterval - elapsed;
@@ -204,6 +212,43 @@ public class TickLoop
             {
                 await changesSub.UnsubscribeAsync();
             }
+        }
+    }
+
+    private async Task PushWatchData(ulong tickId, CancellationToken cancellationToken)
+    {
+        var watches = _watchManager.GetActiveWatches();
+        if (watches.Count == 0)
+            return;
+
+        foreach (var watch in watches)
+        {
+            var data = new WatchData
+            {
+                WatchId = watch.WatchId,
+                TickId = tickId
+            };
+
+            if (_watchManager.ShouldIncludeSystems(watch))
+            {
+                var sysResponse = _handlers.BuildSystemsResponse();
+                data = data with
+                {
+                    Systems = sysResponse.Systems,
+                    Stages = sysResponse.Stages
+                };
+            }
+
+            if (watch.IncludeEntities)
+            {
+                var entResponse = _handlers.BuildEntitiesResponse(watch.ComponentFilter);
+                data = data with { Entities = entResponse.Entities };
+            }
+
+            await _nats.PublishAsync(
+                watch.DataSubject,
+                MessagePackSerializer.Serialize(data),
+                cancellationToken: cancellationToken);
         }
     }
 }
