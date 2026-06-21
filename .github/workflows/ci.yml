@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-engine:
     runs-on: ubuntu-latest
 
     services:
@@ -30,8 +30,23 @@ jobs:
       - name: Build
         run: dotnet build engine/Engine.sln --no-restore
 
-      - name: Test
-        run: dotnet test engine/Engine.sln --no-build --verbosity normal
+      - name: Test Engine (unit + integration)
+        run: dotnet test engine/Engine.Tests --no-build --verbosity normal
+        env:
+          NATS_URL: nats://localhost:4222
+
+      - name: Test Client (unit)
+        run: dotnet test engine/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~ComponentBufferTests"
+
+      - name: Start coordinator for client integration tests
+        run: |
+          dotnet run --project engine/Engine --no-build &
+          sleep 3
+        env:
+          NATS_URL: nats://localhost:4222
+
+      - name: Test Client (integration)
+        run: dotnet test engine/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~SystemRunnerIntegrationTests"
         env:
           NATS_URL: nats://localhost:4222
 
