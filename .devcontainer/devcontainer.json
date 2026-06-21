@@ -1,19 +1,30 @@
 {
-  "name": "engine-dev",
+  "name": "ECS Engine Dev",
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "forwardPorts": [4222, 3000, 5000],
   "postStartCommand": ".devcontainer/start-nats.sh",
+  "postCreateCommand": "cd editor/frontend && npm install",
   "customizations": {
     "vscode": {
       "extensions": [
+        "ms-dotnettools.csdevkit",
+        "ms-dotnettools.csharp",
         "eamodio.gitlens",
-        "rust-lang.rust-analyzer",
         "esbenp.prettier-vscode",
-        "bytecodealliance.wit-idl",
+        "dbaeumer.vscode-eslint",
         "github.copilot",
         "github.copilot-chat"
       ]
     }
+  },
+  "containerEnv": {
+    "NATS_URL": "nats://localhost:4222"
   }
 }

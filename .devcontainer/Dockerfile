@@ -1,7 +1,6 @@
-FROM rust:slim
+FROM mcr.microsoft.com/devcontainers/dotnet:9.0
 
 RUN apt-get update && apt-get install -y \
-    git \
     curl \
     unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -15,6 +14,3 @@ RUN curl -fsSL https://github.com/nats-io/natscli/releases/download/v0.1.6/nats-
     && unzip /tmp/nats-cli.zip -d /tmp/nats-cli \
     && mv /tmp/nats-cli/nats-0.1.6-linux-amd64/nats /usr/local/bin/nats \
     && rm -rf /tmp/nats-cli /tmp/nats-cli.zip
-
-RUN rustup component add rustfmt
-RUN rustup component add clippy
