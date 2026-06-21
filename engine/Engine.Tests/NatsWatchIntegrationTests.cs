@@ -22,6 +22,7 @@ public class NatsWatchIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _fixture.EnsureAvailable();
         Serialization.Initialize();
         _clientNats = await _fixture.ConnectAsync();
     }

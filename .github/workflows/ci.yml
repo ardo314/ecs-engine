@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      nats:
+        image: nats:2.10
+        ports:
+          - 4222:4222
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore engine/Engine.sln
+
+      - name: Build
+        run: dotnet build engine/Engine.sln --no-restore
+
+      - name: Test
+        run: dotnet test engine/Engine.sln --no-build --verbosity normal
+        env:
+          NATS_URL: nats://localhost:4222
+
+  build-editor-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build
+        run: dotnet build editor/backend/EditorBackend.sln
+
+  build-editor-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm ci
+        working-directory: editor/frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: editor/frontend
