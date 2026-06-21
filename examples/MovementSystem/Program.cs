@@ -1,9 +1,6 @@
 using Client;
 using Engine.Core;
-using Engine.Core.Messages;
 using Examples.Components;
-using MessagePack;
-using NATS.Client.Core;
 
 Serialization.Initialize();
 
@@ -12,32 +9,11 @@ var entityCount = int.TryParse(Environment.GetEnvironmentVariable("SEED_ENTITIES
 
 Console.WriteLine("MovementSystem starting...");
 
-await using var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
-await nats.ConnectAsync();
-
-Console.WriteLine($"Connected to NATS at {natsUrl}");
-
-// Spawn entities via the coordinator
-Console.WriteLine($"[Movement] Requesting {entityCount} entities...");
-for (var i = 0; i < entityCount; i++)
-{
-    var spawnReq = new EntitySpawnRequest
-    {
-        ComponentTypes = [ComponentTypeId.Of<Position>().TypeName, ComponentTypeId.Of<Velocity>().TypeName],
-        ComponentData = [
-            MessagePackSerializer.Serialize(new Position(0f, 0f, 0f)),
-            MessagePackSerializer.Serialize(new Velocity(1f, 0.5f, 0.25f))
-        ]
-    };
-    await nats.PublishAsync("engine.entity.spawn.request", MessagePackSerializer.Serialize(spawnReq));
-}
-Console.WriteLine($"[Movement] Spawn requests sent.");
-
 var tickCount = 0ul;
 
-var runner = new SystemRunner(
+await using var runner = new SystemRunner(
     systemName: "Movement",
-    nats: nats,
+    natsUrl: natsUrl,
     reads: [ComponentTypeId.Of<Velocity>().TypeName],
     writes: [ComponentTypeId.Of<Position>().TypeName],
     tickHandler: async (buffer, dt) =>
@@ -78,6 +54,16 @@ var runner = new SystemRunner(
 
         await Task.CompletedTask;
     });
+
+await runner.ConnectAsync();
+
+// Spawn entities via the coordinator
+Console.WriteLine($"[Movement] Requesting {entityCount} entities...");
+for (var i = 0; i < entityCount; i++)
+{
+    await runner.SpawnEntityAsync(new Position(0f, 0f, 0f), new Velocity(1f, 0.5f, 0.25f));
+}
+Console.WriteLine($"[Movement] Spawn requests sent.");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>

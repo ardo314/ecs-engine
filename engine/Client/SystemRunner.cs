@@ -17,10 +17,11 @@ internal static class ClientModuleInit
 /// <summary>
 /// Connects to the engine coordinator via NATS and runs a system function each tick.
 /// </summary>
-public class SystemRunner
+public class SystemRunner : IAsyncDisposable
 {
     private readonly string _systemName;
-    private readonly NatsConnection _nats;
+    private readonly string _natsUrl;
+    private NatsConnection? _nats;
     private readonly string[] _reads;
     private readonly string[] _writes;
     private readonly Func<ComponentBuffer, float, Task> _tickHandler;
@@ -28,25 +29,62 @@ public class SystemRunner
 
     public SystemRunner(
         string systemName,
-        NatsConnection nats,
-        string[] reads,
-        string[] writes,
-        Func<ComponentBuffer, float, Task> tickHandler)
+        string? natsUrl = null,
+        string[]? reads = null,
+        string[]? writes = null,
+        Func<ComponentBuffer, float, Task>? tickHandler = null)
     {
         _systemName = systemName;
-        _nats = nats;
-        _reads = reads;
-        _writes = writes;
-        _tickHandler = tickHandler;
+        _natsUrl = natsUrl ?? Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+        _reads = reads ?? [];
+        _writes = writes ?? [];
+        _tickHandler = tickHandler ?? ((_, _) => Task.CompletedTask);
     }
 
     public string InstanceId => _instanceId;
+
+    /// <summary>
+    /// Connects to the message transport. Must be called before RunAsync or SpawnEntityAsync.
+    /// </summary>
+    public async Task ConnectAsync(CancellationToken cancellationToken = default)
+    {
+        _nats = new NatsConnection(new NatsOpts { Url = _natsUrl });
+        await _nats.ConnectAsync();
+        Console.WriteLine($"[{_systemName}] Connected to transport.");
+    }
+
+    /// <summary>
+    /// Requests the coordinator to spawn an entity with the given components.
+    /// </summary>
+    public async Task SpawnEntityAsync(params IComponent[] components)
+    {
+        var nats = _nats ?? throw new InvalidOperationException("Call ConnectAsync before spawning entities.");
+        var types = new string[components.Length];
+        var data = new byte[components.Length][];
+        for (var i = 0; i < components.Length; i++)
+        {
+            var type = components[i].GetType();
+            types[i] = type.FullName ?? type.Name;
+            data[i] = MessagePackSerializer.Serialize(type, components[i]);
+        }
+        var req = new EntitySpawnRequest { ComponentTypes = types, ComponentData = data };
+        await nats.PublishAsync("engine.entity.spawn.request", MessagePackSerializer.Serialize(req));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_nats is not null)
+            await _nats.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
 
     /// <summary>
     /// Registers with the coordinator, subscribes to component data, and runs the tick loop.
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
+        var nats = _nats ?? throw new InvalidOperationException("Call ConnectAsync before RunAsync.");
+
         // Register with coordinator (re-publish periodically to survive startup race)
         var descriptor = new SystemDescriptor
         {
@@ -63,7 +101,7 @@ public class SystemRunner
         {
             while (!regCts.Token.IsCancellationRequested)
             {
-                await _nats.PublishAsync("engine.system.register", registrationBytes, cancellationToken: regCts.Token);
+                await nats.PublishAsync("engine.system.register", registrationBytes, cancellationToken: regCts.Token);
                 try { await Task.Delay(1000, regCts.Token); }
                 catch (OperationCanceledException) { break; }
             }
@@ -72,13 +110,13 @@ public class SystemRunner
         Console.WriteLine($"[{_systemName}] Registering (instance {_instanceId}). Reads: [{string.Join(", ", _reads)}], Writes: [{string.Join(", ", _writes)}]");
 
         // Subscribe to schedule messages
-        var scheduleSub = await _nats.SubscribeCoreAsync<byte[]>(
+        var scheduleSub = await nats.SubscribeCoreAsync<byte[]>(
             $"engine.system.schedule.{_systemName}",
             queueGroup: _systemName,
             cancellationToken: cancellationToken);
 
         // Subscribe to component data
-        var dataSub = await _nats.SubscribeCoreAsync<byte[]>(
+        var dataSub = await nats.SubscribeCoreAsync<byte[]>(
             $"engine.component.set.{_systemName}",
             queueGroup: _systemName,
             cancellationToken: cancellationToken);
@@ -133,7 +171,7 @@ public class SystemRunner
                 var mutations = buffer.FlushMutations();
                 foreach (var change in mutations)
                 {
-                    await _nats.PublishAsync(
+                    await nats.PublishAsync(
                         $"engine.component.changed.{_systemName}",
                         MessagePackSerializer.Serialize(change),
                         cancellationToken: cancellationToken);
@@ -141,7 +179,7 @@ public class SystemRunner
 
                 // Acknowledge tick completion
                 var ack = new TickAck { TickId = schedule.TickId, InstanceId = _instanceId };
-                await _nats.PublishAsync(
+                await nats.PublishAsync(
                     "engine.coord.tick.done",
                     MessagePackSerializer.Serialize(ack),
                     cancellationToken: cancellationToken);
@@ -153,7 +191,7 @@ public class SystemRunner
             var unreg = new SystemUnregister { Name = _systemName, InstanceId = _instanceId };
             try
             {
-                await _nats.PublishAsync(
+                await nats.PublishAsync(
                     "engine.system.unregister",
                     MessagePackSerializer.Serialize(unreg),
                     cancellationToken: CancellationToken.None);
