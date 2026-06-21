@@ -5,6 +5,8 @@ using Examples.Components;
 using MessagePack;
 using NATS.Client.Core;
 
+Serialization.Initialize();
+
 var natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
 var entityCount = int.TryParse(Environment.GetEnvironmentVariable("SEED_ENTITIES"), out var ec) ? ec : 10;
 

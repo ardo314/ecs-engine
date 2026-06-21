@@ -5,6 +5,15 @@ using NATS.Client.Core;
 
 namespace Client;
 
+// Ensure contractless serialization is configured when using the Client SDK.
+internal static class ClientModuleInit
+{
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    #pragma warning disable CA2255 // ModuleInitializer is intentional in this SDK
+    internal static void Init() => Serialization.Initialize();
+    #pragma warning restore CA2255
+}
+
 /// <summary>
 /// Connects to the engine coordinator via NATS and runs a system function each tick.
 /// </summary>

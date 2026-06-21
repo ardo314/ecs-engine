@@ -65,8 +65,8 @@ of their own — they are pure identifiers that components are attached to.
 ### Component
 
 A serialisable piece of data attached to an entity (e.g. `Transform3D`,
-`Velocity`). Components must be annotated with `[MessagePackObject]` so they
-can travel over the wire.
+`Velocity`). Components are serialized with MessagePack using the contractless
+resolver — no attributes are required on the types.
 
 ### Archetype
 

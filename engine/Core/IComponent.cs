@@ -1,7 +1,7 @@
 namespace Engine.Core;
 
 /// <summary>
-/// Marker interface for ECS components. All components must also be annotated
-/// with [MessagePackObject] and have [Key] attributes on their properties.
+/// Marker interface for ECS components. Components are serialized using the
+/// contractless MessagePack resolver — no attributes are required.
 /// </summary>
 public interface IComponent { }

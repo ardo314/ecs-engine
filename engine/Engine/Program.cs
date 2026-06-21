@@ -1,8 +1,11 @@
 ﻿using System.Collections.Concurrent;
 using Engine.Coordinator;
+using Engine.Core;
 using Engine.Core.Messages;
 using MessagePack;
 using NATS.Client.Core;
+
+Serialization.Initialize();
 
 var natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
 var tickRate = int.TryParse(Environment.GetEnvironmentVariable("TICK_RATE"), out var tr) ? tr : 20;

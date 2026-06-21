@@ -78,14 +78,15 @@ ecs-engine/
 
 ### Serialisation
 
-- All types that cross the network boundary must be annotated with
-  `[MessagePackObject]` and have `[Key]` attributes on properties.
-- Use MessagePack (`MessagePack-CSharp`) for wire format.
+- Use MessagePack (`MessagePack-CSharp`) with `ContractlessStandardResolver`
+  for wire format — no `[MessagePackObject]` or `[Key]` attributes needed.
+- Call `Serialization.Initialize()` (from `Engine.Core`) at startup or rely on
+  the Client SDK's module initializer.
 - Use `System.Text.Json` only for human-readable config files.
 
 ### ECS-Specific Rules
 
-- Components must be `[MessagePackObject]`-annotated structs or records.
+- Components must be structs or records implementing `IComponent`.
 - Entity IDs are `ulong`. Do not use `int` for entity identifiers.
 - Systems must declare their queries explicitly — no implicit world access.
 - Each system process runs **exactly one system function** — never multiplex
