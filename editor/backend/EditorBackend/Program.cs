@@ -13,7 +13,7 @@ await nats.ConnectAsync();
 Console.WriteLine($"[Editor] Connected to NATS at {natsUrl}");
 
 builder.Services.AddSingleton(nats);
-builder.Services.AddSingleton<WebSocketManager>();
+builder.Services.AddSingleton<WsBroadcaster>();
 builder.Services.AddHostedService<NatsBridgeService>();
 
 var app = builder.Build();

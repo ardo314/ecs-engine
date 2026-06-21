@@ -36,7 +36,8 @@ services:
 
   editor-backend:
     build:
-      context: ./editor/backend
+      context: .
+      dockerfile: editor/backend/Dockerfile
     depends_on:
       - nats
     ports:
@@ -47,6 +48,10 @@ services:
       watch:
         - action: rebuild
           path: ./editor/backend/EditorBackend
+        - action: rebuild
+          path: ./engine/Core
+        - action: rebuild
+          path: ./engine/Client
 
   editor-frontend:
     build:

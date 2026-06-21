@@ -4,7 +4,7 @@ import { SystemsPanel } from "./components/SystemsPanel";
 import { EntityBrowser } from "./components/EntityBrowser";
 
 const WS_URL =
-  import.meta.env.VITE_WS_URL ?? "ws://localhost:5062/ws";
+  import.meta.env.VITE_WS_URL ?? "ws://localhost:5000/ws";
 
 export function App() {
   const { snapshot, connected } = useEngineSocket(WS_URL);
