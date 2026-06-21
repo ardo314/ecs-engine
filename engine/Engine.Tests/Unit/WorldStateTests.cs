@@ -1,7 +1,8 @@
 using Engine.Coordinator;
 
-namespace Engine.Tests;
+namespace Engine.Tests.Unit;
 
+[Trait("Category", "Unit")]
 public class WorldStateTests
 {
     [Fact]

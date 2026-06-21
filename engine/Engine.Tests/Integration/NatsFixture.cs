@@ -6,7 +6,7 @@ using Engine.Core;
 using Engine.Core.Messages;
 using NATS.Client.Core;
 
-namespace Engine.Tests;
+namespace Engine.Tests.Integration;
 
 /// <summary>
 /// Manages a nats-server process and a shared coordinator for integration tests.

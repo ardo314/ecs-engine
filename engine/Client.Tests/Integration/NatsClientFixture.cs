@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using Engine.Core;
 
-namespace Client.Tests;
+namespace Client.Tests.Integration;
 
 /// <summary>
 /// Provides a NATS URL for client integration tests.

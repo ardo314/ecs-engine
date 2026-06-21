@@ -3,13 +3,14 @@ using Engine.Core.Messages;
 using MessagePack;
 using NATS.Client.Core;
 
-namespace Engine.Tests;
+namespace Engine.Tests.Integration;
 
 /// <summary>
 /// Integration tests for the watch subscribe/unsubscribe/data push flow over NATS.
 /// Uses the shared coordinator from NatsFixture.
 /// </summary>
 [Collection("NATS")]
+[Trait("Category", "Integration")]
 public class NatsWatchIntegrationTests : IAsyncLifetime
 {
     private readonly NatsFixture _fixture;

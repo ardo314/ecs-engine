@@ -4,7 +4,9 @@ using Engine.Core.Messages;
 using MessagePack;
 using NATS.Client.Core;
 
-namespace Client.Tests;
+using Client.Tests.Unit;
+
+namespace Client.Tests.Integration;
 
 /// <summary>
 /// Integration tests for SystemRunner against a running engine coordinator.
@@ -12,6 +14,7 @@ namespace Client.Tests;
 /// All verification is done via NATS query APIs — no direct engine references.
 /// </summary>
 [Collection("NATS")]
+[Trait("Category", "Integration")]
 public class SystemRunnerIntegrationTests : IAsyncLifetime
 {
     private readonly NatsClientFixture _fixture;

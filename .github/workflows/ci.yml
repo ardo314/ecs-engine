@@ -30,13 +30,13 @@ jobs:
       - name: Build
         run: dotnet build engine/Engine.sln --no-restore
 
-      - name: Test Engine (unit + integration)
-        run: dotnet test engine/Engine.Tests --no-build --verbosity normal
+      - name: Unit tests
+        run: dotnet test engine/Engine.sln --no-build --verbosity normal --filter "Category=Unit"
+
+      - name: Integration tests (Engine)
+        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "Category=Integration"
         env:
           NATS_URL: nats://localhost:4222
-
-      - name: Test Client (unit)
-        run: dotnet test engine/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~ComponentBufferTests"
 
       - name: Start coordinator for client integration tests
         run: |
@@ -45,8 +45,8 @@ jobs:
         env:
           NATS_URL: nats://localhost:4222
 
-      - name: Test Client (integration)
-        run: dotnet test engine/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~SystemRunnerIntegrationTests"
+      - name: Integration tests (Client)
+        run: dotnet test engine/Client.Tests --no-build --verbosity normal --filter "Category=Integration"
         env:
           NATS_URL: nats://localhost:4222
 

@@ -1,8 +1,9 @@
 using Engine.Coordinator;
 using Engine.Core.Messages;
 
-namespace Engine.Tests;
+namespace Engine.Tests.Unit;
 
+[Trait("Category", "Unit")]
 public class WatchManagerTests
 {
     [Fact]

@@ -3,7 +3,7 @@ using Engine.Core.Messages;
 using MessagePack;
 using NATS.Client.Core;
 
-namespace Engine.Tests;
+namespace Engine.Tests.Integration;
 
 /// <summary>
 /// Integration tests that verify the coordinator's NATS query APIs
@@ -11,6 +11,7 @@ namespace Engine.Tests;
 /// Uses the shared coordinator from NatsFixture.
 /// </summary>
 [Collection("NATS")]
+[Trait("Category", "Integration")]
 public class NatsQueryIntegrationTests : IAsyncLifetime
 {
     private readonly NatsFixture _fixture;

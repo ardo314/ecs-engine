@@ -3,7 +3,7 @@ using Engine.Core;
 using Engine.Core.Messages;
 using MessagePack;
 
-namespace Client.Tests;
+namespace Client.Tests.Unit;
 
 public record TestPosition : IComponent
 {
@@ -17,6 +17,7 @@ public record TestVelocity : IComponent
     public float Vy { get; init; }
 }
 
+[Trait("Category", "Unit")]
 public class ComponentBufferTests
 {
     public ComponentBufferTests()
