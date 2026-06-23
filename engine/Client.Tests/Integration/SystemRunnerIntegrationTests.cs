@@ -278,4 +278,89 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
 
         Assert.True(ticksProcessed > 0, $"Expected ticks, got {ticksProcessed}");
     }
+
+    [Fact]
+    public async Task RunAsync_MutationsAppliedToWorldState()
+    {
+        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
+        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+
+        // Spawn entity with known initial position and velocity
+        await using var spawner = new SystemRunner("MutSpawn", natsUrl: _fixture.Url);
+        await spawner.ConnectAsync();
+        await spawner.SpawnEntityAsync(
+            new TestPosition { X = 0.0f, Y = 0.0f },
+            new TestVelocity { Vx = 10.0f, Vy = 5.0f });
+
+        await WaitUntilAsync(async () =>
+        {
+            var resp = await QueryEntitiesAsync(new[] { posType, velType });
+            return resp.Entities.Length > 0;
+        }, TimeSpan.FromSeconds(5));
+
+        // Run a system that applies velocity to position
+        var ticksProcessed = 0;
+        await using var runner = new SystemRunner(
+            "MutProc",
+            natsUrl: _fixture.Url,
+            reads: [velType],
+            writes: [posType],
+            tickHandler: async (buffer, dt) =>
+            {
+                var velocities = buffer.GetComponents<TestVelocity>();
+                var positions = buffer.GetComponents<TestPosition>();
+
+                foreach (var (entity, vel) in velocities)
+                {
+                    var pos = positions.FirstOrDefault(p => p.Entity.Id == entity.Id);
+                    buffer.SetComponent(entity, new TestPosition
+                    {
+                        X = pos.Component.X + vel.Vx * dt,
+                        Y = pos.Component.Y + vel.Vy * dt
+                    });
+                }
+
+                Interlocked.Increment(ref ticksProcessed);
+                await Task.CompletedTask;
+            });
+
+        await runner.ConnectAsync();
+        using var cts = new CancellationTokenSource();
+        var runTask = runner.RunAsync(cts.Token);
+
+        // Wait for several ticks so position accumulates
+        await WaitUntilAsync(async () =>
+        {
+            await Task.CompletedTask;
+            return Volatile.Read(ref ticksProcessed) >= 5;
+        }, TimeSpan.FromSeconds(10));
+
+        await cts.CancelAsync();
+        try { await runTask; } catch (OperationCanceledException) { }
+
+        // Query the coordinator and verify position actually changed
+        var entities = await QueryEntitiesAsync(new[] { posType, velType });
+        Assert.NotEmpty(entities.Entities);
+
+        // Find our entity by matching velocity
+        EntitySnapshot? match = null;
+        foreach (var e in entities.Entities)
+        {
+            if (!e.Components.ContainsKey(velType)) continue;
+            var v = MessagePackSerializer.Deserialize<TestVelocity>(e.Components[velType]);
+            if (Math.Abs(v.Vx - 10.0f) < 0.01f && Math.Abs(v.Vy - 5.0f) < 0.01f)
+            {
+                match = e;
+                break;
+            }
+        }
+        Assert.NotNull(match);
+
+        var finalPos = MessagePackSerializer.Deserialize<TestPosition>(match.Components[posType]);
+        // With Vx=10 and at least 5 ticks at dt=0.05, X should be >= 2.5
+        Assert.True(finalPos.X > 0.0f,
+            $"Expected Position.X > 0 after system ticks, got {finalPos.X}");
+        Assert.True(finalPos.Y > 0.0f,
+            $"Expected Position.Y > 0 after system ticks, got {finalPos.Y}");
+    }
 }
