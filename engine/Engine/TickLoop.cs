@@ -48,7 +48,7 @@ public class TickLoop
             var tickStart = DateTime.UtcNow;
             tickId++;
 
-            await ProcessPendingSpawns(tickId, cancellationToken);
+            await ProcessPendingStructuralChanges(tickId, cancellationToken);
 
             var stages = _registry.ComputeStages();
 
@@ -76,8 +76,9 @@ public class TickLoop
         Console.WriteLine($"[Coordinator] Shutting down after {tickId} ticks.");
     }
 
-    private async Task ProcessPendingSpawns(ulong tickId, CancellationToken cancellationToken)
+    private async Task ProcessPendingStructuralChanges(ulong tickId, CancellationToken cancellationToken)
     {
+        // Spawns
         while (_pendingSpawns.TryDequeue(out var spawnReq))
         {
             var entityId = _world.AllocateEntity();
@@ -88,6 +89,38 @@ public class TickLoop
 
             var created = new EntityCreated { EntityId = entityId, ComponentTypes = spawnReq.ComponentTypes };
             await _nats.PublishAsync("engine.entity.create", MessagePackSerializer.Serialize(created), cancellationToken: cancellationToken);
+        }
+
+        // Destroys
+        while (_handlers.PendingDestroys.TryDequeue(out var destroyReq))
+        {
+            foreach (var entityId in destroyReq.EntityIds)
+            {
+                if (_world.IsAlive(entityId))
+                {
+                    _world.DestroyEntity(entityId);
+                    var destroyed = new EntityDestroyed { EntityId = entityId };
+                    await _nats.PublishAsync("engine.entity.destroyed", MessagePackSerializer.Serialize(destroyed), cancellationToken: cancellationToken);
+                }
+            }
+        }
+
+        // Component adds
+        while (_handlers.PendingAdds.TryDequeue(out var addReq))
+        {
+            if (_world.IsAlive(addReq.EntityId))
+            {
+                _world.SetComponent(addReq.EntityId, addReq.ComponentType, addReq.Data);
+            }
+        }
+
+        // Component removes
+        while (_handlers.PendingRemoves.TryDequeue(out var removeReq))
+        {
+            if (_world.IsAlive(removeReq.EntityId))
+            {
+                _world.RemoveComponent(removeReq.EntityId, removeReq.ComponentType);
+            }
         }
     }
 
@@ -111,8 +144,29 @@ public class TickLoop
         var systemsScheduled = 0;
         foreach (var sys in stage)
         {
-            var allTypes = sys.Reads.Concat(sys.Writes).Distinct().ToList();
-            var matchingEntities = _world.GetEntitiesWith(allTypes);
+            // Use multi-query matching: entities that match ANY of the system's queries
+            var queries = sys.Queries;
+            List<ulong> matchingEntities;
+            HashSet<string> allTypes;
+
+            if (queries.Length > 0)
+            {
+                matchingEntities = _world.GetEntitiesMatchingQueries(queries);
+                allTypes = new HashSet<string>();
+                foreach (var q in queries)
+                {
+                    foreach (var t in q.RequiredTypes) allTypes.Add(t);
+                    foreach (var t in q.OptionalTypes) allTypes.Add(t);
+                    // Include excluded types so the client can filter
+                    foreach (var t in q.ExcludedTypes) allTypes.Add(t);
+                }
+            }
+            else
+            {
+                // Fallback: no queries defined (shouldn't happen with new API)
+                allTypes = new HashSet<string>(sys.AllReads.Concat(sys.AllWrites).Distinct());
+                matchingEntities = _world.GetEntitiesWith(allTypes.ToList());
+            }
 
             if (matchingEntities.Count == 0)
                 continue;

@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace Engine.Core.Messages;
 
 public record TickStart
@@ -12,12 +14,30 @@ public record TickAck
     public string InstanceId { get; init; } = "";
 }
 
+public record QueryDescriptor
+{
+    public string[] RequiredTypes { get; init; } = [];
+    public string[] OptionalTypes { get; init; } = [];
+    public string[] ExcludedTypes { get; init; } = [];
+    public string[] ReadTypes { get; init; } = [];
+    public string[] WriteTypes { get; init; } = [];
+}
+
 public record SystemDescriptor
 {
     public string Name { get; init; } = "";
     public string InstanceId { get; init; } = "";
-    public string[] Reads { get; init; } = [];
-    public string[] Writes { get; init; } = [];
+    public QueryDescriptor[] Queries { get; init; } = [];
+
+    /// <summary>
+    /// Union of all read types across all queries. Used for conflict detection.
+    /// </summary>
+    public string[] AllReads => Queries.SelectMany(q => q.ReadTypes).Distinct().ToArray();
+
+    /// <summary>
+    /// Union of all write types across all queries. Used for conflict detection.
+    /// </summary>
+    public string[] AllWrites => Queries.SelectMany(q => q.WriteTypes).Distinct().ToArray();
 }
 
 public record SystemUnregister
@@ -65,6 +85,24 @@ public record EntityDestroyed
     public ulong EntityId { get; init; }
 }
 
+public record EntityDestroyRequest
+{
+    public ulong[] EntityIds { get; init; } = [];
+}
+
+public record ComponentAddRequest
+{
+    public ulong EntityId { get; init; }
+    public string ComponentType { get; init; } = "";
+    public byte[] Data { get; init; } = [];
+}
+
+public record ComponentRemoveRequest
+{
+    public ulong EntityId { get; init; }
+    public string ComponentType { get; init; } = "";
+}
+
 // ── Query / Watch API ─────────────────────────────────────────
 
 public record SystemInfo
@@ -73,6 +111,7 @@ public record SystemInfo
     public string InstanceId { get; init; } = "";
     public string[] Reads { get; init; } = [];
     public string[] Writes { get; init; } = [];
+    public QueryDescriptor[] Queries { get; init; } = [];
 }
 
 public record QuerySystemsResponse

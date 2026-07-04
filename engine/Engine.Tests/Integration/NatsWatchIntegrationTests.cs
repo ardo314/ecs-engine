@@ -188,8 +188,12 @@ public class NatsWatchIntegrationTests : IAsyncLifetime
         {
             Name = "WatchSysTest",
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = ["WA"],
-            Writes = ["WB"]
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["WA", "WB"],
+                ReadTypes = ["WA"],
+                WriteTypes = ["WB"]
+            }]
         });
         _fixture.WatchManager.NotifySystemsChanged();
 
@@ -217,8 +221,11 @@ public class NatsWatchIntegrationTests : IAsyncLifetime
         {
             Name = "StableWatch",
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = [],
-            Writes = ["WStable"]
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["WStable"],
+                WriteTypes = ["WStable"]
+            }]
         });
         _fixture.WatchManager.NotifySystemsChanged();
 

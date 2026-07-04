@@ -1,3 +1,5 @@
+using Engine.Core.Messages;
+
 namespace Engine.Coordinator;
 
 /// <summary>
@@ -34,6 +36,14 @@ public class WorldState
             _components[entityId] = bag;
         }
         bag[componentType] = data;
+    }
+
+    public void RemoveComponent(ulong entityId, string componentType)
+    {
+        if (_components.TryGetValue(entityId, out var bag))
+        {
+            bag.Remove(componentType);
+        }
     }
 
     public byte[]? GetComponent(ulong entityId, string componentType)
@@ -85,6 +95,66 @@ public class WorldState
     public int EntityCount => _alive.Count;
 
     public IReadOnlyCollection<ulong> GetAllEntities() => _alive;
+
+    /// <summary>
+    /// Returns all alive entity IDs that match ANY of the given query descriptors.
+    /// A query matches if the entity has ALL required types, at least one optional type
+    /// (if any are specified), and NONE of the excluded types.
+    /// </summary>
+    public List<ulong> GetEntitiesMatchingQueries(QueryDescriptor[] queries)
+    {
+        var result = new HashSet<ulong>();
+        foreach (var query in queries)
+        {
+            foreach (var entityId in _alive)
+            {
+                if (!_components.TryGetValue(entityId, out var bag))
+                    continue;
+
+                // Must have ALL required types
+                var match = true;
+                foreach (var type in query.RequiredTypes)
+                {
+                    if (!bag.ContainsKey(type))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (!match) continue;
+
+                // Must have at least one optional type (if any specified)
+                if (query.OptionalTypes.Length > 0)
+                {
+                    var hasAny = false;
+                    foreach (var type in query.OptionalTypes)
+                    {
+                        if (bag.ContainsKey(type))
+                        {
+                            hasAny = true;
+                            break;
+                        }
+                    }
+                    if (!hasAny) continue;
+                }
+
+                // Must have NONE of the excluded types
+                var excluded = false;
+                foreach (var type in query.ExcludedTypes)
+                {
+                    if (bag.ContainsKey(type))
+                    {
+                        excluded = true;
+                        break;
+                    }
+                }
+                if (excluded) continue;
+
+                result.Add(entityId);
+            }
+        }
+        return result.ToList();
+    }
 
     public IReadOnlyDictionary<string, byte[]>? GetAllComponents(ulong entityId)
     {

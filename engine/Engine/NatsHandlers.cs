@@ -15,6 +15,13 @@ public class NatsHandlers
     private readonly WorldState _world;
     private readonly WatchManager _watchManager;
     private readonly ConcurrentQueue<EntitySpawnRequest> _pendingSpawns;
+    private readonly ConcurrentQueue<EntityDestroyRequest> _pendingDestroys = new();
+    private readonly ConcurrentQueue<ComponentAddRequest> _pendingAdds = new();
+    private readonly ConcurrentQueue<ComponentRemoveRequest> _pendingRemoves = new();
+
+    public ConcurrentQueue<EntityDestroyRequest> PendingDestroys => _pendingDestroys;
+    public ConcurrentQueue<ComponentAddRequest> PendingAdds => _pendingAdds;
+    public ConcurrentQueue<ComponentRemoveRequest> PendingRemoves => _pendingRemoves;
 
     public NatsHandlers(NatsConnection nats, SystemRegistry registry, WorldState world, WatchManager watchManager, ConcurrentQueue<EntitySpawnRequest> pendingSpawns)
     {
@@ -40,6 +47,9 @@ public class NatsHandlers
         var regSub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.register", cancellationToken: cancellationToken);
         var unregSub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.unregister", cancellationToken: cancellationToken);
         var spawnSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.spawn.request", cancellationToken: cancellationToken);
+        var destroySub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.destroy.request", cancellationToken: cancellationToken);
+        var compAddSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.component.add", cancellationToken: cancellationToken);
+        var compRemoveSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.component.remove", cancellationToken: cancellationToken);
         var querySystemsSub = await _nats.SubscribeCoreAsync<byte[]>("engine.query.systems", cancellationToken: cancellationToken);
         var queryEntitiesSub = await _nats.SubscribeCoreAsync<byte[]>("engine.query.entities", cancellationToken: cancellationToken);
         var watchSubSub = await _nats.SubscribeCoreAsync<byte[]>("engine.watch.subscribe", cancellationToken: cancellationToken);
@@ -51,12 +61,15 @@ public class NatsHandlers
         var regTask = ProcessRegistrations(regSub, cancellationToken);
         var unregTask = ProcessUnregistrations(unregSub, cancellationToken);
         var spawnTask = ProcessSpawnRequests(spawnSub, cancellationToken);
+        var destroyTask = ProcessDestroyRequests(destroySub, cancellationToken);
+        var compAddTask = ProcessComponentAdds(compAddSub, cancellationToken);
+        var compRemoveTask = ProcessComponentRemoves(compRemoveSub, cancellationToken);
         var querySystemsTask = ProcessQuerySystems(querySystemsSub, cancellationToken);
         var queryEntitiesTask = ProcessQueryEntities(queryEntitiesSub, cancellationToken);
         var watchSubTask = ProcessWatchSubscribe(watchSubSub, cancellationToken);
         var watchUnsubTask = ProcessWatchUnsubscribe(watchUnsubSub, cancellationToken);
 
-        await Task.WhenAll(regTask, unregTask, spawnTask, querySystemsTask, queryEntitiesTask, watchSubTask, watchUnsubTask);
+        await Task.WhenAll(regTask, unregTask, spawnTask, destroyTask, compAddTask, compRemoveTask, querySystemsTask, queryEntitiesTask, watchSubTask, watchUnsubTask);
     }
 
     private async Task ProcessRegistrations(INatsSub<byte[]> sub, CancellationToken cancellationToken)
@@ -105,6 +118,54 @@ public class NatsHandlers
             catch (Exception ex)
             {
                 Console.WriteLine($"[Coordinator] Failed to deserialize spawn request: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ProcessDestroyRequests(INatsSub<byte[]> sub, CancellationToken cancellationToken)
+    {
+        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
+        {
+            try
+            {
+                var req = MessagePackSerializer.Deserialize<EntityDestroyRequest>(msg.Data!);
+                _pendingDestroys.Enqueue(req);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Coordinator] Failed to deserialize destroy request: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ProcessComponentAdds(INatsSub<byte[]> sub, CancellationToken cancellationToken)
+    {
+        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
+        {
+            try
+            {
+                var req = MessagePackSerializer.Deserialize<ComponentAddRequest>(msg.Data!);
+                _pendingAdds.Enqueue(req);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Coordinator] Failed to deserialize component add: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ProcessComponentRemoves(INatsSub<byte[]> sub, CancellationToken cancellationToken)
+    {
+        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
+        {
+            try
+            {
+                var req = MessagePackSerializer.Deserialize<ComponentRemoveRequest>(msg.Data!);
+                _pendingRemoves.Enqueue(req);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Coordinator] Failed to deserialize component remove: {ex.Message}");
             }
         }
     }
@@ -201,8 +262,9 @@ public class NatsHandlers
         {
             Name = s.Name,
             InstanceId = s.InstanceId,
-            Reads = s.Reads,
-            Writes = s.Writes
+            Reads = s.AllReads,
+            Writes = s.AllWrites,
+            Queries = s.Queries
         }).ToArray();
 
         var stageNames = stages.Select(stage =>
