@@ -31,13 +31,14 @@ public record SystemDescriptor
 
     /// <summary>
     /// Union of all read types across all queries. Used for conflict detection.
+    /// Methods (not properties) so ContractlessStandardResolver won't serialize them.
     /// </summary>
-    public string[] AllReads => Queries.SelectMany(q => q.ReadTypes).Distinct().ToArray();
+    public string[] GetAllReads() => Queries.SelectMany(q => q.ReadTypes).Distinct().ToArray();
 
     /// <summary>
     /// Union of all write types across all queries. Used for conflict detection.
     /// </summary>
-    public string[] AllWrites => Queries.SelectMany(q => q.WriteTypes).Distinct().ToArray();
+    public string[] GetAllWrites() => Queries.SelectMany(q => q.WriteTypes).Distinct().ToArray();
 }
 
 public record SystemUnregister

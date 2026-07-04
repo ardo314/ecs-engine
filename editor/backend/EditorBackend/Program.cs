@@ -1,6 +1,8 @@
 using System.Net.WebSockets;
 using EditorBackend;
 using Engine.Core;
+using Engine.Core.Messages;
+using MessagePack;
 using NATS.Client.Core;
 
 Serialization.Initialize();
@@ -15,12 +17,57 @@ Console.WriteLine($"[Editor] Connected to NATS at {natsUrl}");
 builder.Services.AddSingleton(nats);
 builder.Services.AddSingleton<WsBroadcaster>();
 builder.Services.AddHostedService<NatsBridgeService>();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+});
 
 var app = builder.Build();
 
+app.UseCors();
 app.UseWebSockets();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+
+// ── Entity management ──────────────────────────────────────────
+
+app.MapPost("/api/entities", async () =>
+{
+    var spawnRequest = new EntitySpawnRequest
+    {
+        ComponentTypes = [],
+        ComponentData = []
+    };
+    await nats.PublishAsync("engine.entity.spawn.request",
+        MessagePackSerializer.Serialize(spawnRequest));
+    return Results.Accepted();
+});
+
+app.MapDelete("/api/entities/{id:long}", async (long id) =>
+{
+    var destroyRequest = new EntityDestroyRequest
+    {
+        EntityIds = [(ulong)id]
+    };
+    await nats.PublishAsync("engine.entity.destroy.request",
+        MessagePackSerializer.Serialize(destroyRequest));
+    return Results.Accepted();
+});
+
+app.MapDelete("/api/entities/{id:long}/components/{componentType}", async (long id, string componentType) =>
+{
+    var removeRequest = new ComponentRemoveRequest
+    {
+        EntityId = (ulong)id,
+        ComponentType = Uri.UnescapeDataString(componentType)
+    };
+    await nats.PublishAsync("engine.entity.component.remove",
+        MessagePackSerializer.Serialize(removeRequest));
+    return Results.Accepted();
+});
+
+// ── WebSocket ──────────────────────────────────────────────────
 
 app.Map("/ws", async context =>
 {
@@ -34,7 +81,6 @@ app.Map("/ws", async context =>
     var wsManager = context.RequestServices.GetRequiredService<WsBroadcaster>();
     var clientId = wsManager.AddClient(ws);
 
-    // Send cached snapshot immediately on connect
     var cached = wsManager.CachedSnapshot;
     if (cached is not null)
     {
@@ -42,7 +88,6 @@ app.Map("/ws", async context =>
         await ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
     }
 
-    // Keep connection alive, listen for incoming messages (future: editor commands)
     var buffer = new byte[4096];
     try
     {

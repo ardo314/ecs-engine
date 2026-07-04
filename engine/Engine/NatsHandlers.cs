@@ -262,8 +262,8 @@ public class NatsHandlers
         {
             Name = s.Name,
             InstanceId = s.InstanceId,
-            Reads = s.AllReads,
-            Writes = s.AllWrites,
+            Reads = s.GetAllReads(),
+            Writes = s.GetAllWrites(),
             Queries = s.Queries
         }).ToArray();
 

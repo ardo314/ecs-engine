@@ -164,7 +164,7 @@ public class TickLoop
             else
             {
                 // Fallback: no queries defined (shouldn't happen with new API)
-                allTypes = new HashSet<string>(sys.AllReads.Concat(sys.AllWrites).Distinct());
+                allTypes = new HashSet<string>(sys.GetAllReads().Concat(sys.GetAllWrites()).Distinct());
                 matchingEntities = _world.GetEntitiesWith(allTypes.ToList());
             }
 
