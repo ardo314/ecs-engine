@@ -6,8 +6,6 @@ namespace Nova.Systems;
 
 public class SetControllerIOSystem : SystemBase
 {
-    public override string SystemName => "SetControllerIO";
-
     private EntityQuery _q = null!;
     private NovaIoClient _novaClient = null!;
     private ulong _tickCount;
@@ -46,6 +44,11 @@ public class SetControllerIOSystem : SystemBase
             new AnalogFloatOutputRequest("AO_2", 3.14));
 
         Console.WriteLine("[SetControllerIO] Entities queued for spawning.");
+    }
+
+    protected override void OnDestroy()
+    {
+        _novaClient?.Dispose();
     }
 
     protected override async Task OnUpdateAsync()
@@ -93,10 +96,5 @@ public class SetControllerIOSystem : SystemBase
         }
 
         _tickCount++;
-    }
-
-    protected override void OnDestroy()
-    {
-        _novaClient?.Dispose();
     }
 }

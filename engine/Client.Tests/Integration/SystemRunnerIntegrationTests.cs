@@ -12,16 +12,11 @@ namespace Client.Tests.Integration;
 
 public class EmptySystem : SystemBase
 {
-    public override string SystemName => _name;
-    private readonly string _name;
-    public EmptySystem() { _name = "Empty"; }
-    public EmptySystem(string name) { _name = name; }
     protected override Task OnUpdateAsync() => Task.CompletedTask;
 }
 
 public class SpawnSystem : SystemBase
 {
-    public override string SystemName => "SpawnSys";
     private readonly IComponent[] _components;
     public SpawnSystem(params IComponent[] components) { _components = components; }
     protected override void OnCreate()
@@ -33,11 +28,7 @@ public class SpawnSystem : SystemBase
 
 public class ReadPositionSystem : SystemBase
 {
-    public override string SystemName => _name;
-    private readonly string _name;
     private EntityQuery _q = null!;
-
-    public ReadPositionSystem(string name) { _name = name; }
 
     protected override void OnCreate()
     {
@@ -50,7 +41,6 @@ public class ReadPositionSystem : SystemBase
 
 public class TickProcessorSystem : SystemBase
 {
-    public override string SystemName => "TickProc";
     private EntityQuery _q = null!;
     public int TicksProcessed;
 
@@ -139,7 +129,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task ConnectAsync_EstablishesConnection()
     {
-        var system = new EmptySystem("ConnectTest");
+        var system = new EmptySystem();
         system.InvokeOnCreate();
         await using var runner = new SystemRunner(system, _fixture.Url);
         await runner.ConnectAsync();
@@ -148,7 +138,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task RunAsync_ThrowsBeforeConnect()
     {
-        var system = new EmptySystem("NoConnectRun");
+        var system = new EmptySystem();
         system.InvokeOnCreate();
         await using var runner = new SystemRunner(system, _fixture.Url);
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -158,8 +148,8 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task InstanceId_IsUnique()
     {
-        var s1 = new EmptySystem("Id1");
-        var s2 = new EmptySystem("Id2");
+        var s1 = new EmptySystem();
+        var s2 = new EmptySystem();
         s1.InvokeOnCreate();
         s2.InvokeOnCreate();
         await using var r1 = new SystemRunner(s1, _fixture.Url);
@@ -200,8 +190,8 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task RunAsync_RegistersSystemVisibleViaQuery()
     {
-        var name = $"RegQ_{Guid.NewGuid():N}"[..20];
-        var system = new ReadPositionSystem(name);
+        var system = new ReadPositionSystem();
+        var name = system.SystemName;
         system.InvokeOnCreate();
         await using var runner = new SystemRunner(system, _fixture.Url);
 
@@ -227,8 +217,8 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task RunAsync_UnregistersOnCancellation()
     {
-        var name = $"Unreg_{Guid.NewGuid():N}"[..20];
-        var system = new ReadPositionSystem(name);
+        var system = new ReadPositionSystem();
+        var name = system.SystemName;
         system.InvokeOnCreate();
         await using var runner = new SystemRunner(system, _fixture.Url);
 

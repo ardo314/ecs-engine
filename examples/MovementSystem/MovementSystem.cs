@@ -6,7 +6,6 @@ namespace Examples;
 
 public class MovementSystem : SystemBase
 {
-    public override string SystemName => "Movement";
     private EntityQuery _q = null!;
     private ulong _tickCount;
 

@@ -11,9 +11,18 @@ public abstract class SystemBase
     private readonly List<EntityQuery> _queries = new();
 
     /// <summary>
-    /// The system name used for registration. Defaults to the class name.
+    /// The system name used for registration. Derived from the class name
+    /// with a trailing "System" suffix stripped (e.g. MovementSystem → Movement).
     /// </summary>
-    public virtual string SystemName => GetType().Name;
+    public string SystemName { get; } = null!;
+
+    protected SystemBase()
+    {
+        var name = GetType().Name;
+        SystemName = name.EndsWith("System", StringComparison.Ordinal) && name.Length > "System".Length
+            ? name[..^"System".Length]
+            : name;
+    }
 
     /// <summary>
     /// Delta time for the current tick (seconds).
