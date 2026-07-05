@@ -48,7 +48,7 @@ public class TickLoop
             var tickStart = DateTime.UtcNow;
             tickId++;
 
-            await ProcessPendingSpawns(tickId, cancellationToken);
+            await ProcessPendingStructuralChanges(tickId, cancellationToken);
 
             var stages = _registry.ComputeStages();
 
@@ -76,8 +76,9 @@ public class TickLoop
         Console.WriteLine($"[Coordinator] Shutting down after {tickId} ticks.");
     }
 
-    private async Task ProcessPendingSpawns(ulong tickId, CancellationToken cancellationToken)
+    private async Task ProcessPendingStructuralChanges(ulong tickId, CancellationToken cancellationToken)
     {
+        // Spawns
         while (_pendingSpawns.TryDequeue(out var spawnReq))
         {
             var entityId = _world.AllocateEntity();
@@ -89,18 +90,88 @@ public class TickLoop
             var created = new EntityCreated { EntityId = entityId, ComponentTypes = spawnReq.ComponentTypes };
             await _nats.PublishAsync("engine.entity.create", MessagePackSerializer.Serialize(created), cancellationToken: cancellationToken);
         }
+
+        // Destroys
+        while (_handlers.PendingDestroys.TryDequeue(out var destroyReq))
+        {
+            foreach (var entityId in destroyReq.EntityIds)
+            {
+                if (_world.IsAlive(entityId))
+                {
+                    _world.DestroyEntity(entityId);
+                    var destroyed = new EntityDestroyed { EntityId = entityId };
+                    await _nats.PublishAsync("engine.entity.destroyed", MessagePackSerializer.Serialize(destroyed), cancellationToken: cancellationToken);
+                }
+            }
+        }
+
+        // Component adds
+        while (_handlers.PendingAdds.TryDequeue(out var addReq))
+        {
+            if (_world.IsAlive(addReq.EntityId))
+            {
+                _world.SetComponent(addReq.EntityId, addReq.ComponentType, addReq.Data);
+            }
+        }
+
+        // Component removes
+        while (_handlers.PendingRemoves.TryDequeue(out var removeReq))
+        {
+            if (_world.IsAlive(removeReq.EntityId))
+            {
+                _world.RemoveComponent(removeReq.EntityId, removeReq.ComponentType);
+            }
+        }
     }
 
     private async Task ExecuteStage(List<SystemDescriptor> stage, int stageIdx, ulong tickId, CancellationToken cancellationToken)
     {
+        if (stage.Count == 0)
+            return;
+
+        // Subscribe to ack and mutation channels BEFORE sending schedule/shards.
+        // Systems publish mutations then ack, so subscriptions must be active
+        // before the system even receives its schedule to avoid a race.
+        var ackSub = await _nats.SubscribeCoreAsync<byte[]>("engine.coord.tick.done", cancellationToken: cancellationToken);
+        var changeSubs = new Dictionary<string, INatsSub<byte[]>>();
         foreach (var sys in stage)
         {
-            var allTypes = sys.Reads.Concat(sys.Writes).Distinct().ToList();
-            var matchingEntities = _world.GetEntitiesWith(allTypes);
+            var sub = await _nats.SubscribeCoreAsync<byte[]>($"engine.component.changed.{sys.Name}", cancellationToken: cancellationToken);
+            changeSubs[sys.Name] = sub;
+        }
+
+        // Now send schedule + shards to each system
+        var systemsScheduled = 0;
+        foreach (var sys in stage)
+        {
+            // Use multi-query matching: entities that match ANY of the system's queries
+            var queries = sys.Queries;
+            List<ulong> matchingEntities;
+            HashSet<string> allTypes;
+
+            if (queries.Length > 0)
+            {
+                matchingEntities = _world.GetEntitiesMatchingQueries(queries);
+                allTypes = new HashSet<string>();
+                foreach (var q in queries)
+                {
+                    foreach (var t in q.RequiredTypes) allTypes.Add(t);
+                    foreach (var t in q.OptionalTypes) allTypes.Add(t);
+                    // Include excluded types so the client can filter
+                    foreach (var t in q.ExcludedTypes) allTypes.Add(t);
+                }
+            }
+            else
+            {
+                // Fallback: no queries defined (shouldn't happen with new API)
+                allTypes = new HashSet<string>(sys.GetAllReads().Concat(sys.GetAllWrites()).Distinct());
+                matchingEntities = _world.GetEntitiesWith(allTypes.ToList());
+            }
 
             if (matchingEntities.Count == 0)
                 continue;
 
+            systemsScheduled++;
             var entityArray = matchingEntities.ToArray();
 
             var schedule = new SystemSchedule
@@ -136,19 +207,22 @@ public class TickLoop
             }
         }
 
-        // Wait for acks from all systems in this stage
-        var expectedAcks = new HashSet<string>(stage.Select(s => s.Name));
+        // If no systems had matching entities, clean up subscriptions and bail
+        if (systemsScheduled == 0)
+        {
+            await ackSub.UnsubscribeAsync();
+            foreach (var sub in changeSubs.Values)
+                await sub.UnsubscribeAsync();
+            return;
+        }
+
+        // Wait for acks from all scheduled systems
         var receivedAcks = new HashSet<string>();
         var ackDeadline = DateTime.UtcNow.AddSeconds(5);
 
-        if (expectedAcks.Count == 0)
-            return;
-
-        var ackSub = await _nats.SubscribeCoreAsync<byte[]>("engine.coord.tick.done", cancellationToken: cancellationToken);
-
         try
         {
-            while (receivedAcks.Count < expectedAcks.Count && DateTime.UtcNow < ackDeadline)
+            while (receivedAcks.Count < systemsScheduled && DateTime.UtcNow < ackDeadline)
             {
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeoutCts.CancelAfter(ackDeadline - DateTime.UtcNow);
@@ -162,7 +236,7 @@ public class TickLoop
                         {
                             receivedAcks.Add(ack.InstanceId);
                         }
-                        if (receivedAcks.Count >= expectedAcks.Count)
+                        if (receivedAcks.Count >= systemsScheduled)
                             break;
                     }
                 }
@@ -178,15 +252,15 @@ public class TickLoop
             await ackSub.UnsubscribeAsync();
         }
 
-        if (receivedAcks.Count < expectedAcks.Count)
+        if (receivedAcks.Count < systemsScheduled)
         {
-            Console.WriteLine($"[Coordinator] Tick {tickId} stage {stageIdx}: timeout waiting for acks ({receivedAcks.Count}/{expectedAcks.Count})");
+            Console.WriteLine($"[Coordinator] Tick {tickId} stage {stageIdx}: timeout waiting for acks ({receivedAcks.Count}/{systemsScheduled})");
         }
 
-        // Collect mutations from systems in this stage
+        // Collect mutations from the pre-subscribed channels
         foreach (var sys in stage)
         {
-            var changesSub = await _nats.SubscribeCoreAsync<byte[]>($"engine.component.changed.{sys.Name}", cancellationToken: cancellationToken);
+            var changesSub = changeSubs[sys.Name];
             using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             drainCts.CancelAfter(100);
 

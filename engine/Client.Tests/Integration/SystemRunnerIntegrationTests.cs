@@ -8,6 +8,64 @@ using Client.Tests.Unit;
 
 namespace Client.Tests.Integration;
 
+// ── Test system definitions ───────────────────────────────────
+
+public class EmptySystem : SystemBase
+{
+    protected override Task OnUpdateAsync() => Task.CompletedTask;
+}
+
+public class SpawnSystem : SystemBase
+{
+    private readonly IComponent[] _components;
+    public SpawnSystem(params IComponent[] components) { _components = components; }
+    protected override void OnCreate()
+    {
+        Commands.CreateEntity(_components);
+    }
+    protected override Task OnUpdateAsync() => Task.CompletedTask;
+}
+
+public class ReadPositionSystem : SystemBase
+{
+    private EntityQuery _q = null!;
+
+    protected override void OnCreate()
+    {
+        _q = NewQuery()
+            .With(Query.ReadOnly<TestPosition>());
+    }
+
+    protected override Task OnUpdateAsync() => Task.CompletedTask;
+}
+
+public class TickProcessorSystem : SystemBase
+{
+    private EntityQuery _q = null!;
+    public int TicksProcessed;
+
+    protected override void OnCreate()
+    {
+        _q = NewQuery()
+            .With(Query.ReadWrite<TestPosition>())
+            .With(Query.ReadOnly<TestVelocity>());
+    }
+
+    protected override Task OnUpdateAsync()
+    {
+        foreach (var entity in _q.Entities)
+        {
+            var pos = _q.Get<TestPosition>(entity);
+            var vel = _q.Get<TestVelocity>(entity);
+            _q.Set(entity, new TestPosition(
+                pos.X + vel.Vx * DeltaTime,
+                pos.Y + vel.Vy * DeltaTime));
+        }
+        Interlocked.Increment(ref TicksProcessed);
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>
 /// Integration tests for SystemRunner against a running engine coordinator.
 /// Start the engine first: docker compose up nats engine -d
@@ -71,22 +129,18 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task ConnectAsync_EstablishesConnection()
     {
-        await using var runner = new SystemRunner("ConnectTest", natsUrl: _fixture.Url);
+        var system = new EmptySystem();
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
         await runner.ConnectAsync();
-    }
-
-    [Fact]
-    public async Task SpawnEntityAsync_ThrowsBeforeConnect()
-    {
-        await using var runner = new SystemRunner("NoConnect", natsUrl: _fixture.Url);
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => runner.SpawnEntityAsync(new TestPosition()));
     }
 
     [Fact]
     public async Task RunAsync_ThrowsBeforeConnect()
     {
-        await using var runner = new SystemRunner("NoConnectRun", natsUrl: _fixture.Url);
+        var system = new EmptySystem();
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => runner.RunAsync(CancellationToken.None));
     }
@@ -94,20 +148,34 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task InstanceId_IsUnique()
     {
-        await using var r1 = new SystemRunner("Id1", natsUrl: _fixture.Url);
-        await using var r2 = new SystemRunner("Id2", natsUrl: _fixture.Url);
+        var s1 = new EmptySystem();
+        var s2 = new EmptySystem();
+        s1.InvokeOnCreate();
+        s2.InvokeOnCreate();
+        await using var r1 = new SystemRunner(s1, _fixture.Url);
+        await using var r2 = new SystemRunner(s2, _fixture.Url);
         Assert.NotEqual(r1.InstanceId, r2.InstanceId);
         Assert.NotEmpty(r1.InstanceId);
     }
 
     [Fact]
-    public async Task SpawnEntityAsync_EntityAppearsViaQuery()
+    public async Task SpawnEntityViaEcb_EntityAppearsViaQuery()
     {
-        await using var runner = new SystemRunner("SpawnQ", natsUrl: _fixture.Url);
+        var system = new SpawnSystem(new TestPosition { X = 77.0f, Y = 88.0f });
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
         await runner.ConnectAsync();
 
+        // ECB is flushed on connect in RunAsync, but we need to manually flush here since we don't call RunAsync
+        // Instead, the ECB gets flushed when RunAsync starts. Let's use a short-lived RunAsync.
         var typeName = ComponentTypeId.Of<TestPosition>().TypeName;
-        await runner.SpawnEntityAsync(new TestPosition { X = 77.0f, Y = 88.0f });
+
+        // Run for a brief time to let the ECB flush
+        using var cts = new CancellationTokenSource();
+        var runTask = runner.RunAsync(cts.Token);
+        await Task.Delay(500);
+        await cts.CancelAsync();
+        try { await runTask; } catch (OperationCanceledException) { }
 
         await WaitUntilAsync(async () =>
         {
@@ -120,57 +188,12 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SpawnEntityAsync_MultipleComponents_AllStoredCorrectly()
-    {
-        await using var runner = new SystemRunner("SpawnMulti", natsUrl: _fixture.Url);
-        await runner.ConnectAsync();
-
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
-
-        await runner.SpawnEntityAsync(
-            new TestPosition { X = 11.0f, Y = 22.0f },
-            new TestVelocity { Vx = 3.0f, Vy = 4.0f });
-
-        await WaitUntilAsync(async () =>
-        {
-            var resp = await QueryEntitiesAsync(new[] { posType, velType });
-            return resp.Entities.Length > 0;
-        }, TimeSpan.FromSeconds(5));
-
-        var result = await QueryEntitiesAsync(new[] { posType, velType });
-        Assert.NotEmpty(result.Entities);
-
-        // Find the specific entity by matching the velocity (which is never mutated)
-        EntitySnapshot? match = null;
-        foreach (var e in result.Entities)
-        {
-            if (!e.Components.ContainsKey(velType)) continue;
-            var v = MessagePackSerializer.Deserialize<TestVelocity>(e.Components[velType]);
-            if (Math.Abs(v.Vx - 3.0f) < 0.01f && Math.Abs(v.Vy - 4.0f) < 0.01f)
-            {
-                match = e;
-                break;
-            }
-        }
-        Assert.NotNull(match);
-
-        var pos = MessagePackSerializer.Deserialize<TestPosition>(match.Components[posType]);
-        var vel = MessagePackSerializer.Deserialize<TestVelocity>(match.Components[velType]);
-        Assert.Equal(11.0f, pos.X);
-        Assert.Equal(22.0f, pos.Y);
-        Assert.Equal(3.0f, vel.Vx);
-        Assert.Equal(4.0f, vel.Vy);
-    }
-
-    [Fact]
     public async Task RunAsync_RegistersSystemVisibleViaQuery()
     {
-        var name = $"RegQ_{Guid.NewGuid():N}"[..20];
-        await using var runner = new SystemRunner(
-            name,
-            natsUrl: _fixture.Url,
-            reads: [ComponentTypeId.Of<TestPosition>().TypeName]);
+        var system = new ReadPositionSystem();
+        var name = system.SystemName;
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
 
         await runner.ConnectAsync();
         using var cts = new CancellationTokenSource();
@@ -194,11 +217,10 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task RunAsync_UnregistersOnCancellation()
     {
-        var name = $"Unreg_{Guid.NewGuid():N}"[..20];
-        await using var runner = new SystemRunner(
-            name,
-            natsUrl: _fixture.Url,
-            reads: [ComponentTypeId.Of<TestPosition>().TypeName]);
+        var system = new ReadPositionSystem();
+        var name = system.SystemName;
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
 
         await runner.ConnectAsync();
         using var cts = new CancellationTokenSource();
@@ -224,12 +246,19 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
         var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
 
-        // Spawn entity with both components
-        await using var spawner = new SystemRunner("TickSpawn", natsUrl: _fixture.Url);
-        await spawner.ConnectAsync();
-        await spawner.SpawnEntityAsync(
+        // Spawn entity with both components via a separate system
+        var spawner = new SpawnSystem(
             new TestPosition { X = 0.0f, Y = 0.0f },
             new TestVelocity { Vx = 10.0f, Vy = 5.0f });
+        spawner.InvokeOnCreate();
+        await using var spawnRunner = new SystemRunner(spawner, _fixture.Url);
+        await spawnRunner.ConnectAsync();
+        // Run briefly to flush ECB
+        using var spawnCts = new CancellationTokenSource();
+        var spawnTask = spawnRunner.RunAsync(spawnCts.Token);
+        await Task.Delay(500);
+        await spawnCts.CancelAsync();
+        try { await spawnTask; } catch (OperationCanceledException) { }
 
         await WaitUntilAsync(async () =>
         {
@@ -238,31 +267,9 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         }, TimeSpan.FromSeconds(5));
 
         // Run a system that reads velocity and writes position
-        var ticksProcessed = 0;
-        await using var runner = new SystemRunner(
-            "TickProc",
-            natsUrl: _fixture.Url,
-            reads: [velType],
-            writes: [posType],
-            tickHandler: async (buffer, dt) =>
-            {
-                var velocities = buffer.GetComponents<TestVelocity>();
-                var positions = buffer.GetComponents<TestPosition>();
-
-                foreach (var (entity, vel) in velocities)
-                {
-                    var pos = positions.FirstOrDefault(p => p.Entity.Id == entity.Id);
-                    buffer.SetComponent(entity, new TestPosition
-                    {
-                        X = pos.Component.X + vel.Vx * dt,
-                        Y = pos.Component.Y + vel.Vy * dt
-                    });
-                }
-
-                Interlocked.Increment(ref ticksProcessed);
-                await Task.CompletedTask;
-            });
-
+        var system = new TickProcessorSystem();
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
         await runner.ConnectAsync();
         using var cts = new CancellationTokenSource();
         var runTask = runner.RunAsync(cts.Token);
@@ -270,12 +277,80 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         await WaitUntilAsync(async () =>
         {
             await Task.CompletedTask;
-            return Volatile.Read(ref ticksProcessed) > 0;
+            return Volatile.Read(ref system.TicksProcessed) > 0;
         }, TimeSpan.FromSeconds(10));
 
         await cts.CancelAsync();
         try { await runTask; } catch (OperationCanceledException) { }
 
-        Assert.True(ticksProcessed > 0, $"Expected ticks, got {ticksProcessed}");
+        Assert.True(system.TicksProcessed > 0, $"Expected ticks, got {system.TicksProcessed}");
+    }
+
+    [Fact]
+    public async Task RunAsync_MutationsAppliedToWorldState()
+    {
+        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
+        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+
+        // Spawn entity with known initial position and velocity
+        var spawner = new SpawnSystem(
+            new TestPosition { X = 0.0f, Y = 0.0f },
+            new TestVelocity { Vx = 10.0f, Vy = 5.0f });
+        spawner.InvokeOnCreate();
+        await using var spawnRunner = new SystemRunner(spawner, _fixture.Url);
+        await spawnRunner.ConnectAsync();
+        using var spawnCts = new CancellationTokenSource();
+        var spawnTask = spawnRunner.RunAsync(spawnCts.Token);
+        await Task.Delay(500);
+        await spawnCts.CancelAsync();
+        try { await spawnTask; } catch (OperationCanceledException) { }
+
+        await WaitUntilAsync(async () =>
+        {
+            var resp = await QueryEntitiesAsync(new[] { posType, velType });
+            return resp.Entities.Length > 0;
+        }, TimeSpan.FromSeconds(5));
+
+        // Run a system that applies velocity to position
+        var system = new TickProcessorSystem();
+        system.InvokeOnCreate();
+        await using var runner = new SystemRunner(system, _fixture.Url);
+        await runner.ConnectAsync();
+        using var cts = new CancellationTokenSource();
+        var runTask = runner.RunAsync(cts.Token);
+
+        // Wait for several ticks so position accumulates
+        await WaitUntilAsync(async () =>
+        {
+            await Task.CompletedTask;
+            return Volatile.Read(ref system.TicksProcessed) >= 5;
+        }, TimeSpan.FromSeconds(10));
+
+        await cts.CancelAsync();
+        try { await runTask; } catch (OperationCanceledException) { }
+
+        // Query the coordinator and verify position actually changed
+        var entities = await QueryEntitiesAsync(new[] { posType, velType });
+        Assert.NotEmpty(entities.Entities);
+
+        // Find our entity by matching velocity
+        EntitySnapshot? match = null;
+        foreach (var e in entities.Entities)
+        {
+            if (!e.Components.ContainsKey(velType)) continue;
+            var v = MessagePackSerializer.Deserialize<TestVelocity>(e.Components[velType]);
+            if (Math.Abs(v.Vx - 10.0f) < 0.01f && Math.Abs(v.Vy - 5.0f) < 0.01f)
+            {
+                match = e;
+                break;
+            }
+        }
+        Assert.NotNull(match);
+
+        var finalPos = MessagePackSerializer.Deserialize<TestPosition>(match.Components[posType]);
+        Assert.True(finalPos.X > 0.0f,
+            $"Expected Position.X > 0 after system ticks, got {finalPos.X}");
+        Assert.True(finalPos.Y > 0.0f,
+            $"Expected Position.Y > 0 after system ticks, got {finalPos.Y}");
     }
 }

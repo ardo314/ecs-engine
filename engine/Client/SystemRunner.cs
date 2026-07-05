@@ -15,60 +15,34 @@ internal static class ClientModuleInit
 }
 
 /// <summary>
-/// Connects to the engine coordinator via NATS and runs a system function each tick.
+/// Connects a <see cref="SystemBase"/> to the engine coordinator via NATS
+/// and runs its tick loop.
 /// </summary>
 public class SystemRunner : IAsyncDisposable
 {
-    private readonly string _systemName;
+    private readonly SystemBase _system;
     private readonly string _natsUrl;
     private NatsConnection? _nats;
-    private readonly string[] _reads;
-    private readonly string[] _writes;
-    private readonly Func<ComponentBuffer, float, Task> _tickHandler;
     private readonly string _instanceId = Guid.NewGuid().ToString("N");
 
-    public SystemRunner(
-        string systemName,
-        string? natsUrl = null,
-        string[]? reads = null,
-        string[]? writes = null,
-        Func<ComponentBuffer, float, Task>? tickHandler = null)
+    public SystemRunner(SystemBase system, string? natsUrl = null)
     {
-        _systemName = systemName;
+        _system = system;
         _natsUrl = natsUrl ?? Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
-        _reads = reads ?? [];
-        _writes = writes ?? [];
-        _tickHandler = tickHandler ?? ((_, _) => Task.CompletedTask);
     }
 
     public string InstanceId => _instanceId;
 
+    public string SystemName => _system.SystemName;
+
     /// <summary>
-    /// Connects to the message transport. Must be called before RunAsync or SpawnEntityAsync.
+    /// Connects to the message transport.
     /// </summary>
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         _nats = new NatsConnection(new NatsOpts { Url = _natsUrl });
         await _nats.ConnectAsync();
-        Console.WriteLine($"[{_systemName}] Connected to transport.");
-    }
-
-    /// <summary>
-    /// Requests the coordinator to spawn an entity with the given components.
-    /// </summary>
-    public async Task SpawnEntityAsync(params IComponent[] components)
-    {
-        var nats = _nats ?? throw new InvalidOperationException("Call ConnectAsync before spawning entities.");
-        var types = new string[components.Length];
-        var data = new byte[components.Length][];
-        for (var i = 0; i < components.Length; i++)
-        {
-            var type = components[i].GetType();
-            types[i] = type.FullName ?? type.Name;
-            data[i] = MessagePackSerializer.Serialize(type, components[i]);
-        }
-        var req = new EntitySpawnRequest { ComponentTypes = types, ComponentData = data };
-        await nats.PublishAsync("engine.entity.spawn.request", MessagePackSerializer.Serialize(req));
+        Console.WriteLine($"[{SystemName}] Connected to transport.");
     }
 
     public async ValueTask DisposeAsync()
@@ -80,18 +54,19 @@ public class SystemRunner : IAsyncDisposable
 
     /// <summary>
     /// Registers with the coordinator, subscribes to component data, and runs the tick loop.
+    /// Calls OnUpdateAsync each tick, then flushes query mutations and ECB commands.
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
         var nats = _nats ?? throw new InvalidOperationException("Call ConnectAsync before RunAsync.");
+        var systemName = SystemName;
 
-        // Register with coordinator (re-publish periodically to survive startup race)
+        // Build registration descriptor from all queries
         var descriptor = new SystemDescriptor
         {
-            Name = _systemName,
+            Name = systemName,
             InstanceId = _instanceId,
-            Reads = _reads,
-            Writes = _writes
+            Queries = _system.GetQueryDescriptors()
         };
         var registrationBytes = MessagePackSerializer.Serialize(descriptor);
 
@@ -107,21 +82,25 @@ public class SystemRunner : IAsyncDisposable
             }
         }, regCts.Token);
 
-        Console.WriteLine($"[{_systemName}] Registering (instance {_instanceId}). Reads: [{string.Join(", ", _reads)}], Writes: [{string.Join(", ", _writes)}]");
+        var reads = _system.GetAllReadTypes();
+        var writes = _system.GetAllWriteTypes();
+        Console.WriteLine($"[{systemName}] Registering (instance {_instanceId}). Reads: [{string.Join(", ", reads)}], Writes: [{string.Join(", ", writes)}]");
 
         // Subscribe to schedule messages
         var scheduleSub = await nats.SubscribeCoreAsync<byte[]>(
-            $"engine.system.schedule.{_systemName}",
-            queueGroup: _systemName,
+            $"engine.system.schedule.{systemName}",
+            queueGroup: systemName,
             cancellationToken: cancellationToken);
 
         // Subscribe to component data
         var dataSub = await nats.SubscribeCoreAsync<byte[]>(
-            $"engine.component.set.{_systemName}",
-            queueGroup: _systemName,
+            $"engine.component.set.{systemName}",
+            queueGroup: systemName,
             cancellationToken: cancellationToken);
 
-        var buffer = new ComponentBuffer();
+        // Flush any ECB commands from OnCreate (e.g. entity seeding)
+        await FlushEcbAsync(nats, cancellationToken);
+
         var firstSchedule = true;
 
         try
@@ -132,14 +111,13 @@ public class SystemRunner : IAsyncDisposable
                 {
                     firstSchedule = false;
                     await regCts.CancelAsync();
-                    Console.WriteLine($"[{_systemName}] Registered successfully — receiving ticks.");
+                    Console.WriteLine($"[{systemName}] Registered successfully — receiving ticks.");
                 }
 
                 var schedule = MessagePackSerializer.Deserialize<SystemSchedule>(schedMsg.Data!);
-                buffer.Clear();
-                buffer.SetTickId(schedule.TickId);
 
-                // Receive shards
+                // Receive shards into a dictionary
+                var shards = new Dictionary<string, (ulong[] Entities, byte[][] Data)>();
                 var shardsReceived = 0;
                 using var shardCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 shardCts.CancelAfter(TimeSpan.FromSeconds(5));
@@ -151,7 +129,8 @@ public class SystemRunner : IAsyncDisposable
                         var shard = MessagePackSerializer.Deserialize<ComponentShard>(dataMsg.Data!);
                         if (shard.TickId != schedule.TickId) continue;
 
-                        buffer.AddShard(shard);
+                        var entityData = MessagePackSerializer.Deserialize<byte[][]>(shard.Data);
+                        shards[shard.ComponentType] = (shard.Entities, entityData);
                         shardsReceived++;
 
                         if (shardsReceived >= schedule.ShardCount)
@@ -160,22 +139,37 @@ public class SystemRunner : IAsyncDisposable
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    Console.WriteLine($"[{_systemName}] Timeout waiting for shards (got {shardsReceived}/{schedule.ShardCount})");
+                    Console.WriteLine($"[{systemName}] Timeout waiting for shards (got {shardsReceived}/{schedule.ShardCount})");
                 }
 
-                // Execute tick handler
-                var dt = 1.0f / 20f; // TODO: receive from TickStart or schedule
-                await _tickHandler(buffer, dt);
-
-                // Publish mutations
-                var mutations = buffer.FlushMutations();
-                foreach (var change in mutations)
+                // Populate all queries with the shard data
+                foreach (var query in _system.GetQueries())
                 {
-                    await nats.PublishAsync(
-                        $"engine.component.changed.{_systemName}",
-                        MessagePackSerializer.Serialize(change),
-                        cancellationToken: cancellationToken);
+                    query.Populate(shards, schedule.TickId);
                 }
+
+                // Set tick state on the system
+                _system.DeltaTime = 1.0f / 20f; // TODO: receive from schedule
+                _system.TickId = schedule.TickId;
+
+                // Execute the system's update
+                await _system.InvokeOnUpdateAsync();
+
+                // Flush query mutations
+                foreach (var query in _system.GetQueries())
+                {
+                    var mutations = query.FlushMutations();
+                    foreach (var change in mutations)
+                    {
+                        await nats.PublishAsync(
+                            $"engine.component.changed.{systemName}",
+                            MessagePackSerializer.Serialize(change),
+                            cancellationToken: cancellationToken);
+                    }
+                }
+
+                // Flush ECB commands
+                await FlushEcbAsync(nats, cancellationToken);
 
                 // Acknowledge tick completion
                 var ack = new TickAck { TickId = schedule.TickId, InstanceId = _instanceId };
@@ -188,7 +182,7 @@ public class SystemRunner : IAsyncDisposable
         finally
         {
             // Unregister on shutdown
-            var unreg = new SystemUnregister { Name = _systemName, InstanceId = _instanceId };
+            var unreg = new SystemUnregister { Name = systemName, InstanceId = _instanceId };
             try
             {
                 await nats.PublishAsync(
@@ -200,7 +194,52 @@ public class SystemRunner : IAsyncDisposable
 
             await scheduleSub.UnsubscribeAsync();
             await dataSub.UnsubscribeAsync();
-            Console.WriteLine($"[{_systemName}] Shut down.");
+            Console.WriteLine($"[{systemName}] Shut down.");
         }
+    }
+
+    private async Task FlushEcbAsync(NatsConnection nats, CancellationToken ct)
+    {
+        var ecb = _system.Commands;
+        if (!ecb.HasPendingCommands) return;
+
+        // Spawns
+        foreach (var spawn in ecb.Spawns)
+        {
+            await nats.PublishAsync(
+                "engine.entity.spawn.request",
+                MessagePackSerializer.Serialize(spawn),
+                cancellationToken: ct);
+        }
+
+        // Destroys
+        if (ecb.Destroys.Count > 0)
+        {
+            var destroyReq = new EntityDestroyRequest { EntityIds = ecb.Destroys.ToArray() };
+            await nats.PublishAsync(
+                "engine.entity.destroy.request",
+                MessagePackSerializer.Serialize(destroyReq),
+                cancellationToken: ct);
+        }
+
+        // Component adds
+        foreach (var add in ecb.Adds)
+        {
+            await nats.PublishAsync(
+                "engine.entity.component.add",
+                MessagePackSerializer.Serialize(add),
+                cancellationToken: ct);
+        }
+
+        // Component removes
+        foreach (var remove in ecb.Removes)
+        {
+            await nats.PublishAsync(
+                "engine.entity.component.remove",
+                MessagePackSerializer.Serialize(remove),
+                cancellationToken: ct);
+        }
+
+        ecb.Clear();
     }
 }

@@ -1,5 +1,6 @@
 import { Badge, Grid, Group, Text, Title } from "@mantine/core";
 import { useEngineSocket } from "./hooks/useEngineSocket";
+import { useEditorApi } from "./hooks/useEditorApi";
 import { SystemsPanel } from "./components/SystemsPanel";
 import { EntityBrowser } from "./components/EntityBrowser";
 
@@ -8,6 +9,7 @@ const WS_URL =
 
 export function App() {
   const { snapshot, connected } = useEngineSocket(WS_URL);
+  const { createEntity, deleteEntity, removeComponent } = useEditorApi();
 
   return (
     <div style={{ padding: "1rem" }}>
@@ -37,7 +39,12 @@ export function App() {
           />
         </Grid.Col>
         <Grid.Col span={7}>
-          <EntityBrowser entities={snapshot?.entities ?? []} />
+          <EntityBrowser
+            entities={snapshot?.entities ?? []}
+            onCreateEntity={createEntity}
+            onDeleteEntity={deleteEntity}
+            onRemoveComponent={removeComponent}
+          />
         </Grid.Col>
       </Grid>
     </div>

@@ -11,8 +11,12 @@ public class SystemRegistryTests
         {
             Name = name,
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = reads,
-            Writes = writes
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = reads.Concat(writes).Distinct().ToArray(),
+                ReadTypes = reads,
+                WriteTypes = writes
+            }]
         };
 
     [Fact]

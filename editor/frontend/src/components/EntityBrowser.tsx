@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
   Accordion,
+  ActionIcon,
   Badge,
+  Button,
   Code,
   Group,
   ScrollArea,
@@ -9,14 +11,23 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import type { EntitySnapshot } from "../types";
 
 interface EntityBrowserProps {
   entities: EntitySnapshot[];
+  onCreateEntity: () => void;
+  onDeleteEntity: (entityId: number) => void;
+  onRemoveComponent: (entityId: number, componentType: string) => void;
 }
 
-export function EntityBrowser({ entities }: EntityBrowserProps) {
+export function EntityBrowser({
+  entities,
+  onCreateEntity,
+  onDeleteEntity,
+  onRemoveComponent,
+}: EntityBrowserProps) {
   const [filter, setFilter] = useState("");
 
   const lower = filter.toLowerCase();
@@ -30,9 +41,12 @@ export function EntityBrowser({ entities }: EntityBrowserProps) {
 
   return (
     <div>
-      <Title order={3} mb="sm">
-        Entities
-      </Title>
+      <Group justify="space-between" mb="sm">
+        <Title order={3}>Entities</Title>
+        <Button size="xs" onClick={onCreateEntity}>
+          + Create Entity
+        </Button>
+      </Group>
 
       <TextInput
         placeholder="Filter by entity ID or component type..."
@@ -59,7 +73,7 @@ export function EntityBrowser({ entities }: EntityBrowserProps) {
                 value={String(entity.entityId)}
               >
                 <Accordion.Control>
-                  <Group gap="sm">
+                  <Group gap="sm" wrap="nowrap">
                     <Text fw={500} size="sm">
                       Entity {entity.entityId}
                     </Text>
@@ -71,7 +85,22 @@ export function EntityBrowser({ entities }: EntityBrowserProps) {
                   </Group>
                 </Accordion.Control>
                 <Accordion.Panel>
-                  <ComponentDetails components={entity.components} />
+                  <ComponentDetails
+                    entity={entity}
+                    onRemoveComponent={(type) =>
+                      onRemoveComponent(entity.entityId, type)
+                    }
+                  />
+                  <Group mt="xs">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      onClick={() => onDeleteEntity(entity.entityId)}
+                    >
+                      Delete Entity
+                    </Button>
+                  </Group>
                 </Accordion.Panel>
               </Accordion.Item>
             ))}
@@ -83,9 +112,11 @@ export function EntityBrowser({ entities }: EntityBrowserProps) {
 }
 
 function ComponentDetails({
-  components,
+  entity,
+  onRemoveComponent,
 }: {
-  components: Record<string, Record<string, unknown> | null>;
+  entity: EntitySnapshot;
+  onRemoveComponent: (type: string) => void;
 }) {
   return (
     <Table withTableBorder withColumnBorders>
@@ -93,10 +124,11 @@ function ComponentDetails({
         <Table.Tr>
           <Table.Th>Component</Table.Th>
           <Table.Th>Fields</Table.Th>
+          <Table.Th w={40} />
         </Table.Tr>
       </Table.Thead>
       <Table.Tbody>
-        {Object.entries(components).map(([type, fields]) => (
+        {Object.entries(entity.components).map(([type, fields]) => (
           <Table.Tr key={type}>
             <Table.Td>
               <Text fw={500} size="sm">
@@ -117,6 +149,18 @@ function ComponentDetails({
                   (unable to deserialize)
                 </Text>
               )}
+            </Table.Td>
+            <Table.Td>
+              <Tooltip label={`Remove ${type}`}>
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  color="red"
+                  onClick={() => onRemoveComponent(type)}
+                >
+                  ✕
+                </ActionIcon>
+              </Tooltip>
             </Table.Td>
           </Table.Tr>
         ))}

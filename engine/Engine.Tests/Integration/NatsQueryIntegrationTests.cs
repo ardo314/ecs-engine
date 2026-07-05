@@ -41,8 +41,12 @@ public class NatsQueryIntegrationTests : IAsyncLifetime
         {
             Name = "TestMovement",
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = ["Velocity"],
-            Writes = ["Position"]
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["Velocity", "Position"],
+                ReadTypes = ["Velocity"],
+                WriteTypes = ["Position"]
+            }]
         };
         await _clientNats.PublishAsync("engine.system.register",
             MessagePackSerializer.Serialize(descriptor));
@@ -68,15 +72,21 @@ public class NatsQueryIntegrationTests : IAsyncLifetime
         {
             Name = "Physics_Q",
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = [],
-            Writes = ["Transform_Q"]
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["Transform_Q"],
+                WriteTypes = ["Transform_Q"]
+            }]
         });
         _fixture.Registry.Register(new SystemDescriptor
         {
             Name = "Render_Q",
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = ["Transform_Q"],
-            Writes = []
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["Transform_Q"],
+                ReadTypes = ["Transform_Q"]
+            }]
         });
 
         var reply = await _clientNats.RequestAsync<byte[], byte[]>(

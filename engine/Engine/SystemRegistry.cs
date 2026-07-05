@@ -65,7 +65,7 @@ public class SystemRegistry
                 var conflicts = false;
 
                 // Conflict: this system writes something the stage reads or writes
-                foreach (var w in sys.Writes)
+                foreach (var w in sys.GetAllWrites())
                 {
                     if (stageReads.Contains(w) || stageWrites.Contains(w))
                     {
@@ -77,7 +77,7 @@ public class SystemRegistry
                 // Conflict: this system reads something the stage writes
                 if (!conflicts)
                 {
-                    foreach (var r in sys.Reads)
+                    foreach (var r in sys.GetAllReads())
                     {
                         if (stageWrites.Contains(r))
                         {
@@ -91,8 +91,8 @@ public class SystemRegistry
                 {
                     stage.Add(sys);
                     placed.Add(sys.Name);
-                    foreach (var w in sys.Writes) stageWrites.Add(w);
-                    foreach (var r in sys.Reads) stageReads.Add(r);
+                    foreach (var w in sys.GetAllWrites()) stageWrites.Add(w);
+                    foreach (var r in sys.GetAllReads()) stageReads.Add(r);
                 }
             }
 

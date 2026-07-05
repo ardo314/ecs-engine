@@ -40,8 +40,12 @@ public class NatsSystemLifecycleIntegrationTests : IAsyncLifetime
         {
             Name = "LifecycleTest",
             InstanceId = Guid.NewGuid().ToString(),
-            Reads = ["LA"],
-            Writes = ["LB"]
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["LA", "LB"],
+                ReadTypes = ["LA"],
+                WriteTypes = ["LB"]
+            }]
         };
 
         await _clientNats.PublishAsync("engine.system.register",
@@ -60,8 +64,11 @@ public class NatsSystemLifecycleIntegrationTests : IAsyncLifetime
         {
             Name = "ToRemove",
             InstanceId = instanceId,
-            Reads = [],
-            Writes = ["LC"]
+            Queries = [new QueryDescriptor
+            {
+                RequiredTypes = ["LC"],
+                WriteTypes = ["LC"]
+            }]
         };
 
         await _clientNats.PublishAsync("engine.system.register",
@@ -102,8 +109,11 @@ public class NatsSystemLifecycleIntegrationTests : IAsyncLifetime
             {
                 Name = "NotifyTest",
                 InstanceId = Guid.NewGuid().ToString(),
-                Reads = [],
-                Writes = ["LD"]
+                Queries = [new QueryDescriptor
+                {
+                    RequiredTypes = ["LD"],
+                    WriteTypes = ["LD"]
+                }]
             }));
         await Task.Delay(300);
 
@@ -147,8 +157,12 @@ public class NatsSystemLifecycleIntegrationTests : IAsyncLifetime
             {
                 Name = "FullFlowSys",
                 InstanceId = Guid.NewGuid().ToString(),
-                Reads = ["Vel_FF"],
-                Writes = ["Pos_FF"]
+                Queries = [new QueryDescriptor
+                {
+                    RequiredTypes = ["Vel_FF", "Pos_FF"],
+                    ReadTypes = ["Vel_FF"],
+                    WriteTypes = ["Pos_FF"]
+                }]
             }));
         await Task.Delay(300);
 
