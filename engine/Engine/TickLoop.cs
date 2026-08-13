@@ -51,7 +51,8 @@ public class TickLoop
 
             await ProcessPendingStructuralChanges(tickId, cancellationToken);
 
-            var stages = _registry.ComputeStages();
+            var stages = _registry.ComputeStages(_world.ResolveTaggedTypes(
+                _registry.GetUniqueSystems().SelectMany(s => s.GetAllTags())));
 
             for (var stageIdx = 0; stageIdx < stages.Count; stageIdx++)
             {
@@ -160,10 +161,11 @@ public class TickLoop
             var queries = sys.Queries;
             List<ulong> matchingEntities;
             HashSet<string> allTypes;
+            var taggedTypes = _world.ResolveTaggedTypes(sys.GetAllTags());
 
             if (queries.Length > 0)
             {
-                matchingEntities = _world.GetEntitiesMatchingQueries(queries);
+                matchingEntities = _world.GetEntitiesMatchingQueries(queries, taggedTypes);
                 allTypes = new HashSet<string>();
                 foreach (var q in queries)
                 {
@@ -171,6 +173,10 @@ public class TickLoop
                     foreach (var t in q.OptionalTypes) allTypes.Add(t);
                     // Include excluded types so the client can filter
                     foreach (var t in q.ExcludedTypes) allTypes.Add(t);
+                    foreach (var tag in q.TaggedTypes)
+                    {
+                        foreach (var t in taggedTypes[tag]) allTypes.Add(t);
+                    }
                 }
             }
             else
@@ -189,7 +195,8 @@ public class TickLoop
             var schedule = new SystemSchedule
             {
                 TickId = tickId,
-                ShardCount = allTypes.Count
+                ShardCount = allTypes.Count,
+                TaggedTypes = taggedTypes
             };
             await _nats.PublishAsync(
                 $"engine.system.schedule.{sys.Name}",

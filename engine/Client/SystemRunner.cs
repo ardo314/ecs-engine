@@ -147,7 +147,7 @@ public class SystemRunner : IAsyncDisposable
                 // Populate all queries with the shard data
                 foreach (var query in _system.GetQueries())
                 {
-                    query.Populate(shards, schedule.TickId);
+                    query.Populate(shards, schedule.TickId, schedule.TaggedTypes);
                 }
 
                 // Set tick state on the system

@@ -17,6 +17,7 @@ public class EntityQuery
     private readonly List<ComponentAccess> _optional = new();
     private readonly List<string> _excluded = new();
     private readonly List<ComponentAccess> _described = new();
+    private readonly List<string> _tags = new();
     private bool _frozen;
 
     // All component type names this query knows about (required + optional),
@@ -27,6 +28,9 @@ public class EntityQuery
     private HashSet<string> _readOnlyTypes = new();
 
     // ── Runtime state (populated each tick) ─────────────────────
+
+    // Tag type name → component type names carrying it, as resolved for the current tick
+    private Dictionary<string, string[]> _resolvedTags = new();
 
     // Entity-indexed component data: typeName → (entityId → deserialized bytes)
     private readonly Dictionary<string, Dictionary<ulong, byte[]>> _data = new();
@@ -76,6 +80,22 @@ public class EntityQuery
         return this;
     }
 
+    /// <summary>
+    /// Joins through the type system: entities must carry at least one component whose
+    /// component type entity has <typeparamref name="TTag"/>. The matching component types
+    /// are resolved by the coordinator every tick, so types added later are picked up
+    /// without changing this query. Tagged components are read-only — access them via
+    /// <see cref="GetTagged{TTag}"/> or, when the concrete type is known, <see cref="TryGet{T}"/>.
+    /// </summary>
+    public EntityQuery WithAnyTagged<TTag>() where TTag : IComponent
+    {
+        ThrowIfFrozen();
+        var access = Query.ReadOnly<TTag>();
+        _tags.Add(access.TypeName);
+        _described.Add(access);
+        return this;
+    }
+
     // ── Internal lifecycle ──────────────────────────────────────
 
     /// <summary>
@@ -101,18 +121,33 @@ public class EntityQuery
     /// <summary>
     /// Populates the query from component shards received for this tick.
     /// Builds entity-indexed lookups and filters entities to those matching requirements.
+    /// <paramref name="resolvedTags"/> maps each tag type name to the component type
+    /// names carrying it for this tick.
     /// </summary>
-    internal void Populate(Dictionary<string, (ulong[] Entities, byte[][] Data)> shards, ulong tickId)
+    internal void Populate(
+        Dictionary<string, (ulong[] Entities, byte[][] Data)> shards,
+        ulong tickId,
+        IReadOnlyDictionary<string, string[]>? resolvedTags = null)
     {
         _tickId = tickId;
         _data.Clear();
         _matchedEntities.Clear();
         _mutations.Clear();
 
+        _resolvedTags = new Dictionary<string, string[]>();
+        var taggedTypes = new HashSet<string>();
+        foreach (var tag in _tags)
+        {
+            var types = resolvedTags is not null && resolvedTags.TryGetValue(tag, out var t) ? t : [];
+            _resolvedTags[tag] = types;
+            taggedTypes.UnionWith(types);
+        }
+
         // Build entity-indexed lookups for all types this query cares about
         foreach (var (typeName, (entities, data)) in shards)
         {
-            if (!_allTypes.Contains(typeName) && !_excluded.Contains(typeName))
+            if (!_allTypes.Contains(typeName) && !_excluded.Contains(typeName)
+                && !taggedTypes.Contains(typeName))
                 continue;
 
             var dict = new Dictionary<ulong, byte[]>();
@@ -139,6 +174,22 @@ public class EntityQuery
                 candidates = new HashSet<ulong>(dict.Keys);
             else
                 candidates.IntersectWith(dict.Keys);
+        }
+
+        // Each tag requires at least one component of a type carrying it
+        foreach (var tag in _tags)
+        {
+            var withTag = new HashSet<ulong>();
+            foreach (var typeName in _resolvedTags[tag])
+            {
+                if (_data.TryGetValue(typeName, out var dict))
+                    withTag.UnionWith(dict.Keys);
+            }
+
+            if (candidates is null)
+                candidates = withTag;
+            else
+                candidates.IntersectWith(withTag);
         }
 
         if (candidates is null)
@@ -231,12 +282,48 @@ public class EntityQuery
             throw new InvalidOperationException(
                 $"Cannot write to component {typeof(T).Name} — it was declared as ReadOnly in this query.");
 
+        if (IsTagged(typeName))
+            throw new InvalidOperationException(
+                $"Cannot write to component {typeof(T).Name} — it is only in this query through a tag join, which is read-only.");
+
         if (!_mutations.TryGetValue(typeName, out var dict))
         {
             dict = new Dictionary<ulong, byte[]>();
             _mutations[typeName] = dict;
         }
         dict[entity.Id] = MessagePackSerializer.Serialize(component);
+    }
+
+    // ── Tag joins ───────────────────────────────────────────
+
+    /// <summary>
+    /// The component type names carrying <typeparamref name="TTag"/> this tick.
+    /// </summary>
+    public IReadOnlyList<string> TaggedTypeNames<TTag>() where TTag : IComponent =>
+        _resolvedTags.TryGetValue(ComponentTypeId.Of<TTag>().TypeName, out var types) ? types : [];
+
+    /// <summary>
+    /// The components on <paramref name="entity"/> whose type carries <typeparamref name="TTag"/>.
+    /// Values are raw because the concrete types are only known at runtime — use
+    /// <see cref="TaggedComponent.As{T}"/> once the type name identifies one you know.
+    /// </summary>
+    public IEnumerable<TaggedComponent> GetTagged<TTag>(Entity entity) where TTag : IComponent
+    {
+        foreach (var typeName in TaggedTypeNames<TTag>())
+        {
+            if (_data.TryGetValue(typeName, out var dict) && dict.TryGetValue(entity.Id, out var bytes))
+                yield return new TaggedComponent(typeName, bytes);
+        }
+    }
+
+    private bool IsTagged(string typeName)
+    {
+        foreach (var (_, types) in _resolvedTags)
+        {
+            if (Array.IndexOf(types, typeName) >= 0 && !_allTypes.Contains(typeName))
+                return true;
+        }
+        return false;
     }
 
     // ── Each — tuple iteration ──────────────────────────────
@@ -323,7 +410,8 @@ public class EntityQuery
                 .Distinct().ToArray(),
             WriteTypes = _required.Where(a => a.IsReadWrite).Select(a => a.TypeName)
                 .Concat(_optional.Where(a => a.IsReadWrite).Select(a => a.TypeName))
-                .Distinct().ToArray()
+                .Distinct().ToArray(),
+            TaggedTypes = _tags.Distinct().ToArray()
         };
     }
 
@@ -344,4 +432,15 @@ public class EntityQuery
         if (_frozen)
             throw new InvalidOperationException("Cannot modify a query after OnCreate has completed.");
     }
+}
+
+/// <summary>
+/// A component matched through a tag join, identified by its type name because the
+/// concrete type is not known until the tick resolves.
+/// </summary>
+public readonly record struct TaggedComponent(string TypeName, byte[] Data)
+{
+    public T As<T>() where T : IComponent => MessagePackSerializer.Deserialize<T>(Data);
+
+    public bool Is<T>() where T : IComponent => TypeName == ComponentTypeId.Of<T>().TypeName;
 }

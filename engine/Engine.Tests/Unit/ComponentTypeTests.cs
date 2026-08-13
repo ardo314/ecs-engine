@@ -1,4 +1,5 @@
 using Engine.Core;
+using Engine.Core.Messages;
 using Engine.Coordinator;
 using MessagePack;
 
@@ -67,6 +68,54 @@ public class ComponentTypeTests
 
         Assert.Null(world.FindTypeEntity(PidSettings));
         Assert.NotEqual(typeEntity, world.GetOrCreateTypeEntity(PidSettings));
+    }
+
+    // ── Tag joins ──────────────────────────────────────────────
+
+    [Fact]
+    public void GetTypesTaggedWith_ReturnsTypesCarryingTheTag()
+    {
+        var world = new WorldState();
+        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "Nova.Components.Setting", [0xC0]);
+        world.SetComponent(world.GetOrCreateTypeEntity("Nova.Components.GainSettings"), "Nova.Components.Setting", [0xC0]);
+        world.GetOrCreateTypeEntity("Nova.Components.MotorTelemetry");
+
+        var tagged = world.GetTypesTaggedWith("Nova.Components.Setting");
+
+        Assert.Equal(2, tagged.Count);
+        Assert.Contains(PidSettings, tagged);
+        Assert.Contains("Nova.Components.GainSettings", tagged);
+    }
+
+    [Fact]
+    public void GetEntitiesMatchingQueries_TaggedTypes_MatchesEntitiesCarryingATaggedComponent()
+    {
+        var world = new WorldState();
+        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "Nova.Components.Setting", [0xC0]);
+
+        var withSetting = world.AllocateEntity();
+        world.SetComponent(withSetting, PidSettings, [1]);
+        var withoutSetting = world.AllocateEntity();
+        world.SetComponent(withoutSetting, "Nova.Components.MotorTelemetry", [2]);
+
+        var matches = world.GetEntitiesMatchingQueries(
+            [new QueryDescriptor { TaggedTypes = ["Nova.Components.Setting"] }]);
+
+        Assert.Single(matches);
+        Assert.Equal(withSetting, matches[0]);
+    }
+
+    [Fact]
+    public void GetEntitiesMatchingQueries_TaggedTypes_UntaggedTypeMatchesNothing()
+    {
+        var world = new WorldState();
+        var entity = world.AllocateEntity();
+        world.SetComponent(entity, PidSettings, [1]);
+
+        var matches = world.GetEntitiesMatchingQueries(
+            [new QueryDescriptor { TaggedTypes = ["Nova.Components.Setting"] }]);
+
+        Assert.Empty(matches);
     }
 
     [Fact]

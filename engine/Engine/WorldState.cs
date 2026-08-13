@@ -145,6 +145,34 @@ public class WorldState
     public ulong? FindTypeEntity(string typeName) =>
         _typeEntities.TryGetValue(typeName, out var id) ? id : null;
 
+    /// <summary>
+    /// Returns the component type names whose type entity carries <paramref name="tagType"/>.
+    /// </summary>
+    public List<string> GetTypesTaggedWith(string tagType)
+    {
+        var result = new List<string>();
+        foreach (var (typeName, entityId) in _typeEntities)
+        {
+            if (_components.TryGetValue(entityId, out var bag) && bag.ContainsKey(tagType))
+                result.Add(typeName);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Resolves each tag type name to the component type names currently carrying it.
+    /// </summary>
+    public Dictionary<string, string[]> ResolveTaggedTypes(IEnumerable<string> tagTypes)
+    {
+        var result = new Dictionary<string, string[]>();
+        foreach (var tag in tagTypes)
+        {
+            if (!result.ContainsKey(tag))
+                result[tag] = GetTypesTaggedWith(tag).ToArray();
+        }
+        return result;
+    }
+
     public int EntityCount => _alive.Count;
 
     public IReadOnlyCollection<ulong> GetAllEntities() => _alive;
@@ -152,10 +180,16 @@ public class WorldState
     /// <summary>
     /// Returns all alive entity IDs that match ANY of the given query descriptors.
     /// A query matches if the entity has ALL required types, at least one optional type
-    /// (if any are specified), and NONE of the excluded types.
+    /// (if any are specified), at least one component per tag type, and NONE of the
+    /// excluded types. <paramref name="taggedResolution"/> maps tag type names to the
+    /// component type names carrying them; it is resolved from the world when omitted.
     /// </summary>
-    public List<ulong> GetEntitiesMatchingQueries(QueryDescriptor[] queries)
+    public List<ulong> GetEntitiesMatchingQueries(
+        QueryDescriptor[] queries,
+        IReadOnlyDictionary<string, string[]>? taggedResolution = null)
     {
+        taggedResolution ??= ResolveTaggedTypes(queries.SelectMany(q => q.TaggedTypes));
+
         var result = new HashSet<ulong>();
         foreach (var query in queries)
         {
@@ -190,6 +224,30 @@ public class WorldState
                     }
                     if (!hasAny) continue;
                 }
+
+                // Must have at least one component carrying each tag
+                var taggedOk = true;
+                foreach (var tag in query.TaggedTypes)
+                {
+                    var hasTagged = false;
+                    if (taggedResolution.TryGetValue(tag, out var taggedTypes))
+                    {
+                        foreach (var type in taggedTypes)
+                        {
+                            if (bag.ContainsKey(type))
+                            {
+                                hasTagged = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!hasTagged)
+                    {
+                        taggedOk = false;
+                        break;
+                    }
+                }
+                if (!taggedOk) continue;
 
                 // Must have NONE of the excluded types
                 var excluded = false;

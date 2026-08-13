@@ -21,6 +21,12 @@ public record QueryDescriptor
     public string[] ExcludedTypes { get; init; } = [];
     public string[] ReadTypes { get; init; } = [];
     public string[] WriteTypes { get; init; } = [];
+
+    /// <summary>
+    /// Tag component type names. For each entry, an entity must carry at least one
+    /// component whose type entity has that component. Resolved per tick by the coordinator.
+    /// </summary>
+    public string[] TaggedTypes { get; init; } = [];
 }
 
 public record SystemDescriptor
@@ -39,6 +45,11 @@ public record SystemDescriptor
     /// Union of all write types across all queries. Used for conflict detection.
     /// </summary>
     public string[] GetAllWrites() => Queries.SelectMany(q => q.WriteTypes).Distinct().ToArray();
+
+    /// <summary>
+    /// Union of all tag types across all queries.
+    /// </summary>
+    public string[] GetAllTags() => Queries.SelectMany(q => q.TaggedTypes).Distinct().ToArray();
 }
 
 public record SystemUnregister
@@ -51,6 +62,11 @@ public record SystemSchedule
 {
     public ulong TickId { get; init; }
     public int ShardCount { get; init; }
+
+    /// <summary>
+    /// Tag component type name → the component type names carrying it this tick.
+    /// </summary>
+    public Dictionary<string, string[]> TaggedTypes { get; init; } = new();
 }
 
 public record ComponentShard

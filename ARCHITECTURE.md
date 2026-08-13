@@ -129,6 +129,39 @@ A declarative description of which component types a system needs, and whether
 it needs them mutably or immutably. The coordinator uses queries to compute
 data dependencies and schedule systems with maximum parallelism.
 
+#### Tag joins
+
+A query can select on the type system instead of on concrete types:
+
+```csharp
+_settings = NewQuery()
+    .With(Query.ReadOnly<ControllerRef>())
+    .WithAnyTagged<Setting>();
+```
+
+`WithAnyTagged<TTag>` matches entities carrying at least one component whose
+**type entity** has `TTag` — the join the editor performs manually in two steps,
+expressed as one query. The coordinator resolves the tag to concrete type names
+every tick, matches entities against them, ships those shards, and returns the
+resolution in `SystemSchedule.TaggedTypes`, so component types that appear later
+are picked up without the system changing. The resolved types also count as reads
+for stage conflict detection.
+
+Because the concrete types are unknown at compile time, tagged components are
+read-only and are read by type name:
+
+```csharp
+foreach (var entity in _settings.Entities)
+foreach (var tagged in _settings.GetTagged<Setting>(entity))
+{
+    if (tagged.Is<PidSettings>())
+        Use(tagged.As<PidSettings>());
+}
+```
+
+Multiple `WithAnyTagged` calls on one query are ANDed — one matching component
+per tag.
+
 ---
 
 ## Repository Layout
@@ -181,7 +214,7 @@ cluster.
 | `engine.entity.component.remove`    | Any → Coordinator       | `ComponentRemoveRequest { Target, ComponentType }` | Removes a component from the target.              |
 | `engine.system.register`            | System → Coordinator    | `SystemDescriptor { Name, Query, InstanceId }`  | System registers itself on startup.               |
 | `engine.system.unregister`          | System → Coordinator    | `SystemUnregister { Name, InstanceId }`         | System unregisters on shutdown.                   |
-| `engine.system.schedule.<system>`   | Coordinator → System(s) | `SystemSchedule { TickId, ShardRange }`         | Tells system to execute on a shard.               |
+| `engine.system.schedule.<system>`   | Coordinator → System(s) | `SystemSchedule { TickId, ShardCount, TaggedTypes }` | Tells system to execute on a shard, with the tick's tag resolution. |
 | `engine.system.heartbeat`           | Systems → Coordinator   | `Heartbeat { InstanceId, System, Load }`        | Periodic health & load report.                    |
 | `engine.query.systems`              | Any → Coordinator       | (empty)                                          | Request/reply: returns registered systems + stages. |
 | `engine.query.entities`             | Any → Coordinator       | `QueryEntitiesRequest { ComponentFilter?, AnyTypes? }` | Request/reply: returns matching entities + data.  |
