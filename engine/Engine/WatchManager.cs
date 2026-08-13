@@ -19,6 +19,7 @@ public class WatchManager
             IncludeSystems = request.IncludeSystems,
             IncludeEntities = request.IncludeEntities,
             ComponentFilter = request.ComponentFilter,
+            AnyTypes = request.AnyTypes,
             DataSubject = $"engine.watch.data.{request.WatchId}",
             LastSystemsVersion = -1
         };
@@ -99,6 +100,7 @@ public class WatchSpec
     public bool IncludeSystems { get; init; }
     public bool IncludeEntities { get; init; }
     public string[]? ComponentFilter { get; init; }
+    public string[]? AnyTypes { get; init; }
     public string DataSubject { get; init; } = "";
     public int LastSystemsVersion { get; set; } = -1;
 }

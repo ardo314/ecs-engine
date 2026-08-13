@@ -16,6 +16,7 @@ public class EntityQuery
     private readonly List<ComponentAccess> _required = new();
     private readonly List<ComponentAccess> _optional = new();
     private readonly List<string> _excluded = new();
+    private readonly List<ComponentAccess> _described = new();
     private bool _frozen;
 
     // All component type names this query knows about (required + optional),
@@ -47,6 +48,7 @@ public class EntityQuery
     {
         ThrowIfFrozen();
         _required.Add(access);
+        _described.Add(access);
         return this;
     }
 
@@ -58,6 +60,7 @@ public class EntityQuery
     {
         ThrowIfFrozen();
         _optional.AddRange(accesses);
+        _described.AddRange(accesses);
         return this;
     }
 
@@ -67,11 +70,25 @@ public class EntityQuery
     public EntityQuery Without<T>() where T : IComponent
     {
         ThrowIfFrozen();
-        _excluded.Add(ComponentTypeId.Of<T>().TypeName);
+        var access = Query.ReadOnly<T>();
+        _excluded.Add(access.TypeName);
+        _described.Add(access);
         return this;
     }
 
     // ── Internal lifecycle ──────────────────────────────────────
+
+    /// <summary>
+    /// Replays each component type's own description commands, skipping types already seen.
+    /// </summary>
+    internal void Describe(EntityCommandBuffer commands, HashSet<string> seen)
+    {
+        foreach (var access in _described)
+        {
+            if (access.Describe is not null && seen.Add(access.TypeName))
+                access.Describe(commands);
+        }
+    }
 
     internal void Freeze()
     {

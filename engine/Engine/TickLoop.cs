@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Engine.Core;
 using Engine.Core.Messages;
 using MessagePack;
 using NATS.Client.Core;
@@ -108,20 +109,31 @@ public class TickLoop
         // Component adds
         while (_handlers.PendingAdds.TryDequeue(out var addReq))
         {
-            if (_world.IsAlive(addReq.EntityId))
+            if (ResolveTarget(addReq.Target) is { } addTarget)
             {
-                _world.SetComponent(addReq.EntityId, addReq.ComponentType, addReq.Data);
+                _world.SetComponent(addTarget, addReq.ComponentType, addReq.Data);
             }
         }
 
         // Component removes
         while (_handlers.PendingRemoves.TryDequeue(out var removeReq))
         {
-            if (_world.IsAlive(removeReq.EntityId))
+            if (ResolveTarget(removeReq.Target) is { } removeTarget)
             {
-                _world.RemoveComponent(removeReq.EntityId, removeReq.ComponentType);
+                _world.RemoveComponent(removeTarget, removeReq.ComponentType);
             }
         }
+    }
+
+    /// <summary>
+    /// Resolves a command target to an entity id. Component type targets are created on first use.
+    /// </summary>
+    private ulong? ResolveTarget(EntityRef target)
+    {
+        if (target.ComponentType is { Length: > 0 } typeName)
+            return _world.GetOrCreateTypeEntity(typeName);
+
+        return _world.IsAlive(target.EntityId) ? target.EntityId : null;
     }
 
     private async Task ExecuteStage(List<SystemDescriptor> stage, int stageIdx, ulong tickId, CancellationToken cancellationToken)
@@ -315,7 +327,7 @@ public class TickLoop
 
             if (watch.IncludeEntities)
             {
-                var entResponse = _handlers.BuildEntitiesResponse(watch.ComponentFilter);
+                var entResponse = _handlers.BuildEntitiesResponse(watch.ComponentFilter, watch.AnyTypes);
                 data = data with { Entities = entResponse.Entities };
             }
 

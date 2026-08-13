@@ -68,6 +68,42 @@ A serialisable piece of data attached to an entity (e.g. `Transform3D`,
 `Velocity`). Components are serialized with MessagePack using the contractless
 resolver — no attributes are required on the types.
 
+### Component Type
+
+Component types are **entities themselves**. Every component type a system uses
+gets an entity allocated from the same counter as any other entity, carrying
+`ComponentInfo { TypeName }`. Everything else on a type entity is an ordinary
+user-defined component.
+
+A component describes itself by buffering commands against its own type entity:
+
+```csharp
+public readonly record struct Setting : IComponent;
+public readonly record struct Category(string Name) : IComponent;
+
+public record struct PidSettings(float Kp, float Ki, bool Enabled) : IComponent
+{
+    public static void Describe(EntityCommandBuffer commands, EntityRef self)
+    {
+        commands.AddComponent(self, new Setting());
+        commands.AddComponent(self, new Category("Control"));
+    }
+}
+```
+
+`Describe` is a `static virtual` member of `IComponent` with an empty default, so
+implementing it is optional — a component that describes nothing still gets a type
+entity with its `ComponentInfo`. The Client SDK calls it once per component type a
+system uses — discovered from the system's queries — and the resulting commands
+flow through the same command buffer, subjects and tick phase as any other
+structural change. `ComponentInfo` is itself an ordinary component, so there is no
+separate schema message, registration API or startup hook.
+
+Because the attachments are ordinary components on an ordinary entity, an open
+set of user-defined contracts is expressed without the engine knowing what any of
+them mean, and "which component types carry `Setting`" is an ordinary entity
+query. The description is world data, so it outlives the process that sent it.
+
 ### Archetype
 
 A unique combination of component types. Entities with the same set of
@@ -137,12 +173,14 @@ cluster.
 | `engine.entity.spawn.request`       | Systems → Coordinator   | `EntitySpawnRequest { Types, Data }`            | System requests entity creation.                  |
 | `engine.component.set.<system>`     | Coordinator → System(s) | `ComponentShard` or `DataDone` sentinel         | Sends component data to a system.                 |
 | `engine.component.changed.<system>` | Systems → Coordinator   | `ComponentShard` or `ChangesDone` sentinel      | System publishes mutated data back.               |
+| `engine.entity.component.add`       | Any → Coordinator       | `ComponentAddRequest { Target, ComponentType, Data }` | Upserts a component on the target.                |
+| `engine.entity.component.remove`    | Any → Coordinator       | `ComponentRemoveRequest { Target, ComponentType }` | Removes a component from the target.              |
 | `engine.system.register`            | System → Coordinator    | `SystemDescriptor { Name, Query, InstanceId }`  | System registers itself on startup.               |
 | `engine.system.unregister`          | System → Coordinator    | `SystemUnregister { Name, InstanceId }`         | System unregisters on shutdown.                   |
 | `engine.system.schedule.<system>`   | Coordinator → System(s) | `SystemSchedule { TickId, ShardRange }`         | Tells system to execute on a shard.               |
 | `engine.system.heartbeat`           | Systems → Coordinator   | `Heartbeat { InstanceId, System, Load }`        | Periodic health & load report.                    |
 | `engine.query.systems`              | Any → Coordinator       | (empty)                                          | Request/reply: returns registered systems + stages. |
-| `engine.query.entities`             | Any → Coordinator       | `QueryEntitiesRequest { ComponentFilter? }`     | Request/reply: returns matching entities + data.  |
+| `engine.query.entities`             | Any → Coordinator       | `QueryEntitiesRequest { ComponentFilter?, AnyTypes? }` | Request/reply: returns matching entities + data.  |
 | `engine.watch.subscribe`            | Any → Coordinator       | `WatchRequest { WatchId, Include*, Filter }`    | Request/reply: register a watch subscription.     |
 | `engine.watch.unsubscribe`          | Any → Coordinator       | `WatchCancel { WatchId }`                       | Cancels an active watch subscription.             |
 | `engine.watch.data.<watchId>`       | Coordinator → Watcher   | `WatchData { TickId, Systems?, Entities? }`     | Per-tick data pushed to an active watcher.        |
@@ -200,12 +238,24 @@ has no knowledge of the editor — it only exposes generic NATS endpoints.
 - **`engine.query.systems`** — returns all registered systems with their
   read/write declarations and computed execution stages.
 - **`engine.query.entities`** — returns entities with component data. Accepts
-  an optional `ComponentFilter` to narrow results.
+  an optional `ComponentFilter` (entity has ALL of these types) and an optional
+  `AnyTypes` (entity has ANY of these types). Component type entities are
+  returned by the same endpoint, so tools discover the type system through it.
+
+A generic editor for a user-defined contract such as `Setting` therefore
+needs no engine support:
+
+1. Query entities with `ComponentFilter = ["Nova.Components.Setting"]` → the type
+   entities carrying that component.
+2. Read their `ComponentInfo` → the component type names.
+3. Query entities with `AnyTypes = [<those type names>]` → the instances.
+4. Edit and write back via `engine.entity.component.add`, which upserts.
 
 ### Watch API (subscription)
 
 1. Client sends a `WatchRequest` to `engine.watch.subscribe` specifying what
-   to include (systems, entities, optional component filter) and a `WatchId`.
+   to include (systems, entities, optional `ComponentFilter`/`AnyTypes`) and a
+   `WatchId`.
 2. Coordinator replies with a `WatchResponse` containing the `DataSubject`
    (`engine.watch.data.<watchId>`) to subscribe to.
 3. At the end of each tick, the coordinator publishes `WatchData` to the

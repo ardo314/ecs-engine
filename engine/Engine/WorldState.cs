@@ -1,16 +1,20 @@
+using Engine.Core;
 using Engine.Core.Messages;
+using MessagePack;
 
 namespace Engine.Coordinator;
 
 /// <summary>
 /// Stores all entity and component data. Entities are allocated monotonically.
 /// Components are stored as raw byte[] keyed by (entityId, componentType).
+/// Component types are themselves entities, carrying their description as components.
 /// </summary>
 public class WorldState
 {
     private ulong _nextEntityId = 1;
     private readonly HashSet<ulong> _alive = new();
     private readonly Dictionary<ulong, Dictionary<string, byte[]>> _components = new();
+    private readonly Dictionary<string, ulong> _typeEntities = new();
 
     public ulong AllocateEntity()
     {
@@ -22,6 +26,14 @@ public class WorldState
 
     public void DestroyEntity(ulong entityId)
     {
+        if (_components.TryGetValue(entityId, out var bag) &&
+            bag.TryGetValue(ComponentInfo.Type, out var info))
+        {
+            var typeName = MessagePackSerializer
+                .Deserialize<ComponentInfo>(info, Serialization.Options).TypeName;
+            _typeEntities.Remove(typeName);
+        }
+
         _alive.Remove(entityId);
         _components.Remove(entityId);
     }
@@ -91,6 +103,47 @@ public class WorldState
         }
         return result;
     }
+
+    /// <summary>
+    /// Returns all alive entity IDs that have ANY of the specified component types.
+    /// </summary>
+    public List<ulong> GetEntitiesWithAny(IReadOnlyList<string> componentTypes)
+    {
+        var result = new List<ulong>();
+        foreach (var entityId in _alive)
+        {
+            if (!_components.TryGetValue(entityId, out var bag))
+                continue;
+
+            foreach (var type in componentTypes)
+            {
+                if (bag.ContainsKey(type))
+                {
+                    result.Add(entityId);
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the entity representing a component type, creating it on first use.
+    /// </summary>
+    public ulong GetOrCreateTypeEntity(string typeName)
+    {
+        if (_typeEntities.TryGetValue(typeName, out var existing))
+            return existing;
+
+        var id = AllocateEntity();
+        _typeEntities[typeName] = id;
+        SetComponent(id, ComponentInfo.Type, MessagePackSerializer.Serialize(
+            new ComponentInfo(typeName), Serialization.Options));
+        return id;
+    }
+
+    public ulong? FindTypeEntity(string typeName) =>
+        _typeEntities.TryGetValue(typeName, out var id) ? id : null;
 
     public int EntityCount => _alive.Count;
 

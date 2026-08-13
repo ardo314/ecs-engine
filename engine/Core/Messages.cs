@@ -93,14 +93,14 @@ public record EntityDestroyRequest
 
 public record ComponentAddRequest
 {
-    public ulong EntityId { get; init; }
+    public EntityRef Target { get; init; }
     public string ComponentType { get; init; } = "";
     public byte[] Data { get; init; } = [];
 }
 
 public record ComponentRemoveRequest
 {
-    public ulong EntityId { get; init; }
+    public EntityRef Target { get; init; }
     public string ComponentType { get; init; } = "";
 }
 
@@ -123,7 +123,11 @@ public record QuerySystemsResponse
 
 public record QueryEntitiesRequest
 {
+    /// <summary>Entity must have ALL of these component types.</summary>
     public string[]? ComponentFilter { get; init; }
+
+    /// <summary>Entity must have ANY of these component types.</summary>
+    public string[]? AnyTypes { get; init; }
 }
 
 public record QueryEntitiesResponse
@@ -143,6 +147,7 @@ public record WatchRequest
     public bool IncludeSystems { get; init; }
     public bool IncludeEntities { get; init; }
     public string[]? ComponentFilter { get; init; }
+    public string[]? AnyTypes { get; init; }
 }
 
 public record WatchResponse

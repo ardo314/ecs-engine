@@ -1,3 +1,4 @@
+using Engine.Core;
 using Engine.Core.Messages;
 
 namespace Client;
@@ -72,8 +73,12 @@ public abstract class SystemBase
     internal void InvokeOnCreate()
     {
         OnCreate();
+        var described = new HashSet<string>();
         foreach (var q in _queries)
+        {
             q.Freeze();
+            q.Describe(Commands, described);
+        }
     }
 
     internal Task InvokeOnUpdateAsync() => OnUpdateAsync();
