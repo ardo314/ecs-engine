@@ -73,11 +73,10 @@ public abstract class SystemBase
     internal void InvokeOnCreate()
     {
         OnCreate();
-        var described = new HashSet<string>();
         foreach (var q in _queries)
         {
             q.Freeze();
-            q.Describe(Commands, described);
+            q.Describe(Commands);
         }
     }
 

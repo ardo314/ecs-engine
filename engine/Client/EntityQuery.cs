@@ -79,15 +79,12 @@ public class EntityQuery
     // ── Internal lifecycle ──────────────────────────────────────
 
     /// <summary>
-    /// Replays each component type's own description commands, skipping types already seen.
+    /// Buffers each queried component type's own description.
     /// </summary>
-    internal void Describe(EntityCommandBuffer commands, HashSet<string> seen)
+    internal void Describe(EntityCommandBuffer commands)
     {
         foreach (var access in _described)
-        {
-            if (access.Describe is not null && seen.Add(access.TypeName))
-                access.Describe(commands);
-        }
+            access.Describe?.Invoke(commands);
     }
 
     internal void Freeze()

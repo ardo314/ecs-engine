@@ -94,10 +94,14 @@ public record struct PidSettings(float Kp, float Ki, bool Enabled) : IComponent
 `Describe` is a `static virtual` member of `IComponent` with an empty default, so
 implementing it is optional — a component that describes nothing still gets a type
 entity with its `ComponentInfo`. The Client SDK calls it once per component type a
-system uses — discovered from the system's queries — and the resulting commands
+system uses, whether that use is a query or a command, and the resulting commands
 flow through the same command buffer, subjects and tick phase as any other
 structural change. `ComponentInfo` is itself an ordinary component, so there is no
 separate schema message, registration API or startup hook.
+
+Commands buffered during `OnCreate` are held until the system receives its first
+schedule, which proves the coordinator is running — otherwise they would be
+published into the void when a system starts before the coordinator.
 
 Because the attachments are ordinary components on an ordinary entity, an open
 set of user-defined contracts is expressed without the engine knowing what any of

@@ -98,7 +98,9 @@ public class SystemRunner : IAsyncDisposable
             queueGroup: systemName,
             cancellationToken: cancellationToken);
 
-        // Flush any ECB commands from OnCreate (e.g. entity seeding)
+        // OnCreate commands are dropped if the coordinator is not subscribed yet, and a
+        // system with no entities is never scheduled — so wait for a reply before flushing.
+        await WaitForCoordinatorAsync(nats, cancellationToken);
         await FlushEcbAsync(nats, cancellationToken);
 
         var firstSchedule = true;
@@ -198,8 +200,36 @@ public class SystemRunner : IAsyncDisposable
         }
     }
 
-    private async Task FlushEcbAsync(NatsConnection nats, CancellationToken ct)
+    /// <summary>
+    /// Polls the coordinator's query endpoint until it answers.
+    /// </summary>
+    private static async Task WaitForCoordinatorAsync(NatsConnection nats, CancellationToken ct)
     {
+        var announced = false;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attempt.CancelAfter(TimeSpan.FromSeconds(2));
+                await nats.RequestAsync<byte[], byte[]>(
+                    "engine.query.systems", [], cancellationToken: attempt.Token);
+                return;
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                if (!announced)
+                {
+                    announced = true;
+                    Console.WriteLine("Waiting for coordinator...");
+                }
+                await Task.Delay(250, ct);
+            }
+        }
+    }
+
+    private async Task FlushEcbAsync(NatsConnection nats, CancellationToken ct)    {
         var ecb = _system.Commands;
         if (!ecb.HasPendingCommands) return;
 

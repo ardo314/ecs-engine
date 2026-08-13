@@ -15,6 +15,10 @@ public class EntityCommandBuffer
     private readonly List<ComponentAddRequest> _adds = new();
     private readonly List<ComponentRemoveRequest> _removes = new();
 
+    // Types already described to the coordinator; survives Clear() for the buffer's lifetime.
+    private readonly HashSet<string> _described = new();
+    private readonly HashSet<string> _announced = new();
+
     public IReadOnlyList<EntitySpawnRequest> Spawns => _spawns;
     public IReadOnlyList<ulong> Destroys => _destroys;
     public IReadOnlyList<ComponentAddRequest> Adds => _adds;
@@ -32,6 +36,7 @@ public class EntityCommandBuffer
             var type = components[i].GetType();
             types[i] = type.FullName ?? type.Name;
             data[i] = MessagePackSerializer.Serialize(type, components[i]);
+            Announce(types[i]);
         }
         _spawns.Add(new EntitySpawnRequest { ComponentTypes = types, ComponentData = data });
     }
@@ -49,6 +54,7 @@ public class EntityCommandBuffer
     /// </summary>
     public void AddComponent<T>(EntityRef target, T component) where T : IComponent
     {
+        Describe<T>();
         _adds.Add(new ComponentAddRequest
         {
             Target = target,
@@ -62,10 +68,35 @@ public class EntityCommandBuffer
     /// </summary>
     public void RemoveComponent<T>(EntityRef target) where T : IComponent
     {
+        Describe<T>();
         _removes.Add(new ComponentRemoveRequest
         {
             Target = target,
             ComponentType = ComponentTypeId.Of<T>().TypeName
+        });
+    }
+
+    /// <summary>
+    /// Buffers the component type's own description, once per buffer.
+    /// </summary>
+    internal void Describe<T>() where T : IComponent
+    {
+        if (_described.Add(ComponentTypeId.Of<T>().TypeName))
+            Description<T>.Apply(this);
+    }
+
+    /// <summary>
+    /// Buffers a bare type entity for a component only known by name, once per buffer.
+    /// </summary>
+    private void Announce(string typeName)
+    {
+        if (!_announced.Add(typeName)) return;
+
+        _adds.Add(new ComponentAddRequest
+        {
+            Target = EntityRef.OfComponentType(typeName),
+            ComponentType = ComponentInfo.Type,
+            Data = MessagePackSerializer.Serialize(new ComponentInfo(typeName))
         });
     }
 
