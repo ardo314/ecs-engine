@@ -21,7 +21,7 @@ public record struct TestUndescribed(int Value) : IComponent;
 
 internal class DescribingSystem : SystemBase
 {
-    protected override void OnCreate() => NewQuery()
+    public DescribingSystem() => NewQuery()
         .With(Query.ReadWrite<TestDescribed>())
         .With(Query.ReadOnly<TestUndescribed>());
 
@@ -30,7 +30,7 @@ internal class DescribingSystem : SystemBase
 
 internal class DuplicateQuerySystem : SystemBase
 {
-    protected override void OnCreate()
+    public DuplicateQuerySystem()
     {
         NewQuery().With(Query.ReadOnly<TestDescribed>());
         NewQuery().With(Query.ReadWrite<TestDescribed>());
@@ -41,7 +41,7 @@ internal class DuplicateQuerySystem : SystemBase
 
 internal class SpawningSystem : SystemBase
 {
-    protected override void OnCreate() => Commands.CreateEntity(new TestUndescribed(1));
+    protected override void OnAdd() => Commands.CreateEntity(new TestUndescribed(1));
 
     protected override Task OnUpdateAsync() => Task.CompletedTask;
 }
@@ -61,7 +61,7 @@ public class ComponentDescriptionTests
     public void EveryQueriedType_GetsATypeEntity()
     {
         var system = new DescribingSystem();
-        system.InvokeOnCreate();
+        system.InvokeOnAdd();
 
         Assert.Single(InfoFor<TestDescribed>(system));
         Assert.Single(InfoFor<TestUndescribed>(system));
@@ -71,7 +71,7 @@ public class ComponentDescriptionTests
     public void TypeInfo_CarriesTheTypeName()
     {
         var system = new DescribingSystem();
-        system.InvokeOnCreate();
+        system.InvokeOnAdd();
 
         var info = MessagePackSerializer.Deserialize<ComponentInfo>(
             InfoFor<TestUndescribed>(system).Single().Data, Serialization.Options);
@@ -83,7 +83,7 @@ public class ComponentDescriptionTests
     public void DescribedType_AlsoGetsItsAttachments()
     {
         var system = new DescribingSystem();
-        system.InvokeOnCreate();
+        system.InvokeOnAdd();
 
         var self = ComponentTypeId.Of<TestDescribed>().TypeName;
         var category = system.Commands.Adds.Single(a =>
@@ -102,7 +102,7 @@ public class ComponentDescriptionTests
     public void AttachedComponentTypes_GetTypeEntitiesToo()
     {
         var system = new DescribingSystem();
-        system.InvokeOnCreate();
+        system.InvokeOnAdd();
 
         Assert.Single(InfoFor<TestCategory>(system));
         Assert.Single(InfoFor<TestSetting>(system));
@@ -112,7 +112,7 @@ public class ComponentDescriptionTests
     public void TypeUsedByMultipleQueries_IsDescribedOnce()
     {
         var system = new DuplicateQuerySystem();
-        system.InvokeOnCreate();
+        system.InvokeOnAdd();
 
         Assert.Single(InfoFor<TestDescribed>(system));
     }
@@ -121,7 +121,7 @@ public class ComponentDescriptionTests
     public void SpawnedComponentTypes_GetTypeEntities()
     {
         var system = new SpawningSystem();
-        system.InvokeOnCreate();
+        system.InvokeOnAdd();
 
         Assert.Single(InfoFor<TestUndescribed>(system));
     }

@@ -99,7 +99,7 @@ flow through the same command buffer, subjects and tick phase as any other
 structural change. `ComponentInfo` is itself an ordinary component, so there is no
 separate schema message, registration API or startup hook.
 
-Commands buffered during `OnCreate` are held until the system receives its first
+Commands buffered during `OnAdd` are held until the system receives its first
 schedule, which proves the coordinator is running — otherwise they would be
 published into the void when a system starts before the coordinator.
 
@@ -144,7 +144,7 @@ arbitrary entity by id. To read the target of a reference, declare a **second
 query** matching the target entities and index it:
 
 ```csharp
-protected override void OnCreate()
+public MySystem()
 {
     _children = NewQuery().With(Query.ReadOnly<ParentRef>());
     _parents  = NewQuery().With(Query.ReadOnly<Transform3D>());
@@ -171,6 +171,41 @@ declares its query to the coordinator, receives matching component shards,
 executes, and publishes changed data back. Multiple instances of the same
 system can be launched to parallelise work across archetype shards via NATS
 queue groups.
+
+#### Lifecycle
+
+| Stage | Purpose |
+| ----- | ------- |
+| Constructor | Declare queries and take dependencies. Fields are `readonly`. |
+| `OnAdd` | The system joined a world. Buffer initial commands, acquire world-scoped resources. |
+| `OnUpdateAsync` | One tick. |
+| `OnRemove` | The system left the world. Release resources. |
+
+Queries are declared in the **constructor**, not in `OnAdd` — they describe what
+the system *is*, not which world it currently belongs to. `NewQuery` throws once
+the system has been added, so the declaration cannot drift into a lifecycle hook.
+This keeps query fields `readonly` and non-null from construction, and makes
+`OnAdd`/`OnRemove` a genuine cycle: the same instance can be removed from a world
+and added again without accumulating duplicate query registrations.
+
+```csharp
+public class MovementSystem : SystemBase
+{
+    private readonly EntityQuery _q;
+
+    public MovementSystem()
+    {
+        _q = NewQuery()
+            .With(Query.ReadWrite<Position>())
+            .With(Query.ReadOnly<Velocity>());
+    }
+
+    protected override void OnAdd() =>
+        Commands.CreateEntity(new Position(0f, 0f, 0f), new Velocity(1f, 0f, 0f));
+
+    protected override Task OnUpdateAsync() { /* ... */ }
+}
+```
 
 ### Query
 

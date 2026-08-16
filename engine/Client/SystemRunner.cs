@@ -98,7 +98,7 @@ public class SystemRunner : IAsyncDisposable
             queueGroup: systemName,
             cancellationToken: cancellationToken);
 
-        // OnCreate commands are dropped if the coordinator is not subscribed yet, and a
+        // OnAdd commands are dropped if the coordinator is not subscribed yet, and a
         // system with no entities is never scheduled — so wait for a reply before flushing.
         await WaitForCoordinatorAsync(nats, cancellationToken);
         await FlushEcbAsync(nats, cancellationToken);

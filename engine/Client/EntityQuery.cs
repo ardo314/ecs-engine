@@ -6,7 +6,7 @@ namespace Client;
 
 /// <summary>
 /// A type-safe query over entities and their components.
-/// Built via fluent methods in OnCreate, then populated each tick with shard data.
+/// Built via fluent methods in the system constructor, then populated each tick with shard data.
 /// Provides per-entity Get/Set/TryGet and bulk iteration via Each.
 /// </summary>
 public class EntityQuery
@@ -43,7 +43,7 @@ public class EntityQuery
 
     private ulong _tickId;
 
-    // ── Builder methods (called in OnCreate) ────────────────────
+    // ── Builder methods (called in the system constructor) ──────
 
     /// <summary>
     /// Adds a required component. Entities must have this component to match.
@@ -430,7 +430,8 @@ public class EntityQuery
     private void ThrowIfFrozen()
     {
         if (_frozen)
-            throw new InvalidOperationException("Cannot modify a query after OnCreate has completed.");
+            throw new InvalidOperationException(
+                "Cannot modify a query after its system has been added to a world.");
     }
 }
 

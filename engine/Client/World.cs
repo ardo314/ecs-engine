@@ -31,7 +31,7 @@ public sealed class World : IAsyncDisposable
     public string NatsUrl => _ecs.NatsUrl;
 
     /// <summary>
-    /// Runs <paramref name="system"/>: invokes OnCreate, connects to the transport,
+    /// Runs <paramref name="system"/>: invokes OnAdd, connects to the transport,
     /// and starts its tick loop in the background.
     /// </summary>
     public void AddSystem(SystemBase system)
@@ -46,8 +46,8 @@ public sealed class World : IAsyncDisposable
             if (_systems.ContainsKey(system))
                 throw new InvalidOperationException($"System '{system.SystemName}' has already been added.");
 
-            // OnCreate runs here so authoring errors surface from AddSystem itself.
-            system.InvokeOnCreate();
+            // OnAdd runs here so authoring errors surface from AddSystem itself.
+            system.InvokeOnAdd();
             _systems[system] = new Entry(runner, cts, RunSystemAsync(system, runner, cts.Token));
         }
     }
@@ -127,7 +127,7 @@ public sealed class World : IAsyncDisposable
         }
         finally
         {
-            system.InvokeOnDestroy();
+            system.InvokeOnRemove();
             await runner.DisposeAsync();
         }
     }

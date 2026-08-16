@@ -106,6 +106,12 @@ ecs-engine/
   tick, so this costs bandwidth, not a round trip. Systems cannot look up an
   arbitrary entity by id.
 - Systems must declare their queries explicitly — no implicit world access.
+- Declare queries in the system **constructor**, not in a lifecycle hook, so query
+  fields are `readonly` and non-null. `NewQuery` throws once the system has been
+  added to a world.
+- System lifecycle is constructor → `OnAdd` → `OnUpdateAsync` → `OnRemove`.
+  `OnAdd`/`OnRemove` track world membership and may fire more than once on the
+  same instance, so they must be idempotent. Buffer seed commands in `OnAdd`.
 - Each system process runs **exactly one system function** — never multiplex
   multiple systems in a single process.
 - Horizontal scaling is done by launching more instances of the same system

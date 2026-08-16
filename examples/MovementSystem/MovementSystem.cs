@@ -6,15 +6,18 @@ namespace Examples;
 
 public class MovementSystem : SystemBase
 {
-    private EntityQuery _q = null!;
+    private readonly EntityQuery _q;
     private ulong _tickCount;
 
-    protected override void OnCreate()
+    public MovementSystem()
     {
         _q = NewQuery()
             .With(Query.ReadWrite<Position>())
             .With(Query.ReadOnly<Velocity>());
+    }
 
+    protected override void OnAdd()
+    {
         var entityCount = int.TryParse(
             Environment.GetEnvironmentVariable("SEED_ENTITIES"), out var ec) ? ec : 10;
 

@@ -6,11 +6,11 @@ namespace Nova.Systems;
 
 public class SetControllerIOSystem : SystemBase
 {
-    private EntityQuery _q = null!;
-    private NovaIoClient _novaClient = null!;
+    private readonly EntityQuery _q;
+    private readonly NovaIoClient _novaClient;
     private ulong _tickCount;
 
-    protected override void OnCreate()
+    public SetControllerIOSystem()
     {
         _q = NewQuery()
             .With(Query.ReadOnly<NovaControllerId>())
@@ -26,7 +26,10 @@ public class SetControllerIOSystem : SystemBase
         _novaClient = new NovaIoClient(novaBaseUrl);
         if (!string.IsNullOrEmpty(novaToken))
             _novaClient.SetAuthToken(novaToken);
+    }
 
+    protected override void OnAdd()
+    {
         // Spawn example IO entities
         var cell = Environment.GetEnvironmentVariable("NOVA_CELL") ?? "cell";
         var controller = Environment.GetEnvironmentVariable("NOVA_CONTROLLER") ?? "ur10e";
@@ -46,9 +49,9 @@ public class SetControllerIOSystem : SystemBase
         Console.WriteLine("[SetControllerIO] Entities queued for spawning.");
     }
 
-    protected override void OnDestroy()
+    protected override void OnRemove()
     {
-        _novaClient?.Dispose();
+        _novaClient.Dispose();
     }
 
     protected override async Task OnUpdateAsync()
