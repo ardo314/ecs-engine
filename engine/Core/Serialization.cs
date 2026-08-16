@@ -1,4 +1,5 @@
 using MessagePack;
+using MessagePack.Formatters;
 using MessagePack.Resolvers;
 
 namespace Engine.Core;
@@ -13,7 +14,9 @@ public static class Serialization
 
     public static MessagePackSerializerOptions Options { get; } =
         MessagePackSerializerOptions.Standard
-            .WithResolver(ContractlessStandardResolver.Instance);
+            .WithResolver(CompositeResolver.Create(
+                new IMessagePackFormatter[] { new EntityFormatter() },
+                new IFormatterResolver[] { ContractlessStandardResolver.Instance }));
 
     public static void Initialize()
     {

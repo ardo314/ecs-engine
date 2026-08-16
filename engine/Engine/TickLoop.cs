@@ -129,7 +129,7 @@ public class TickLoop
     /// <summary>
     /// Resolves a command target to an entity id. Component type targets are created on first use.
     /// </summary>
-    private ulong? ResolveTarget(EntityRef target)
+    private ulong? ResolveTarget(CommandTarget target)
     {
         if (target.ComponentType is { Length: > 0 } typeName)
             return _world.GetOrCreateTypeEntity(typeName);

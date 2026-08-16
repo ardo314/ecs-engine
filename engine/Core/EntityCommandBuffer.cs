@@ -5,7 +5,7 @@ namespace Engine.Core;
 
 /// <summary>
 /// Buffers structural changes (create, destroy, add/remove component) to be
-/// played onto the world by the coordinator. Commands target an <see cref="EntityRef"/>,
+/// played onto the world by the coordinator. Commands target an <see cref="CommandTarget"/>,
 /// so the same API addresses both entities and component type entities.
 /// </summary>
 public class EntityCommandBuffer
@@ -52,7 +52,7 @@ public class EntityCommandBuffer
     /// <summary>
     /// Buffers a request to add a component to the target.
     /// </summary>
-    public void AddComponent<T>(EntityRef target, T component) where T : IComponent
+    public void AddComponent<T>(CommandTarget target, T component) where T : IComponent
     {
         Describe<T>();
         _adds.Add(new ComponentAddRequest
@@ -66,7 +66,7 @@ public class EntityCommandBuffer
     /// <summary>
     /// Buffers a request to remove a component from the target.
     /// </summary>
-    public void RemoveComponent<T>(EntityRef target) where T : IComponent
+    public void RemoveComponent<T>(CommandTarget target) where T : IComponent
     {
         Describe<T>();
         _removes.Add(new ComponentRemoveRequest
@@ -94,7 +94,7 @@ public class EntityCommandBuffer
 
         _adds.Add(new ComponentAddRequest
         {
-            Target = EntityRef.OfComponentType(typeName),
+            Target = CommandTarget.OfComponentType(typeName),
             ComponentType = ComponentInfo.Type,
             Data = MessagePackSerializer.Serialize(new ComponentInfo(typeName))
         });

@@ -18,7 +18,7 @@ public class MessageSerializationTests
     {
         var request = new ComponentAddRequest
         {
-            Target = EntityRef.OfComponentType("Nova.Components.PidSettings"),
+            Target = CommandTarget.OfComponentType("Nova.Components.PidSettings"),
             ComponentType = ComponentInfo.Type,
             Data = [1, 2, 3]
         };
@@ -51,7 +51,7 @@ public class MessageSerializationTests
     {
         var request = new ComponentRemoveRequest
         {
-            Target = EntityRef.OfComponentType("Nova.Components.PidSettings"),
+            Target = CommandTarget.OfComponentType("Nova.Components.PidSettings"),
             ComponentType = "Nova.Components.Setting"
         };
 

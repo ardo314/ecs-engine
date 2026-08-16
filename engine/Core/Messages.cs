@@ -109,14 +109,14 @@ public record EntityDestroyRequest
 
 public record ComponentAddRequest
 {
-    public EntityRef Target { get; init; }
+    public CommandTarget Target { get; init; }
     public string ComponentType { get; init; } = "";
     public byte[] Data { get; init; } = [];
 }
 
 public record ComponentRemoveRequest
 {
-    public EntityRef Target { get; init; }
+    public CommandTarget Target { get; init; }
     public string ComponentType { get; init; } = "";
 }
 

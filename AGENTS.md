@@ -88,6 +88,23 @@ ecs-engine/
 
 - Components must be structs or records implementing `IComponent`.
 - Entity IDs are `ulong`. Do not use `int` for entity identifiers.
+- Entity references are components suffixed `Ref`, holding a single `Entity`
+  field named for the target's role — `ParentRef(Entity Parent)`,
+  `CellRef(Entity Cell)`. Never a raw `ulong` or a string.
+- Foreign keys into external systems are suffixed `Id` and hold strings —
+  `NovaControllerId(string Cell, string Controller)`. Never mix `Ref` and `Id`
+  data in one component.
+- Role-qualify when an entity holds two references of the same kind
+  (`SourceControllerRef`) or when the target type is generic (`OwnerRef`).
+  Do not name a component `EntityRef` — `CommandTarget` is the command-buffer
+  target type, which is a different thing.
+- Engine-generic relations live in `Engine.Core`; domain relations live in that
+  domain's shared `*.Components` assembly. Component identity is the full type
+  name, so the same relation declared in two namespaces never matches.
+- To dereference, declare a second query matching the target entities and index
+  it. All of a system's queries are populated from the same shard set in the same
+  tick, so this costs bandwidth, not a round trip. Systems cannot look up an
+  arbitrary entity by id.
 - Systems must declare their queries explicitly — no implicit world access.
 - Each system process runs **exactly one system function** — never multiplex
   multiple systems in a single process.

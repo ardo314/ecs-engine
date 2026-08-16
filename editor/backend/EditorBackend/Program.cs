@@ -59,7 +59,7 @@ app.MapDelete("/api/entities/{id:long}/components/{componentType}", async (long 
 {
     var removeRequest = new ComponentRemoveRequest
     {
-        Target = new EntityRef((ulong)id),
+        Target = new CommandTarget((ulong)id),
         ComponentType = Uri.UnescapeDataString(componentType)
     };
     await nats.PublishAsync("engine.entity.component.remove",

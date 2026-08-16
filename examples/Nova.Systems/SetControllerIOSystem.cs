@@ -13,7 +13,7 @@ public class SetControllerIOSystem : SystemBase
     protected override void OnCreate()
     {
         _q = NewQuery()
-            .With(Query.ReadOnly<ControllerRef>())
+            .With(Query.ReadOnly<NovaControllerId>())
             .With(Query.ReadWrite<IoOutputState>())
             .WithAny(
                 Query.ReadOnly<DigitalOutputRequest>(),
@@ -32,15 +32,15 @@ public class SetControllerIOSystem : SystemBase
         var controller = Environment.GetEnvironmentVariable("NOVA_CONTROLLER") ?? "ur10e";
 
         Commands.CreateEntity(
-            new ControllerRef(cell, controller),
+            new NovaControllerId(cell, controller),
             new DigitalOutputRequest("DO_1", true));
 
         Commands.CreateEntity(
-            new ControllerRef(cell, controller),
+            new NovaControllerId(cell, controller),
             new AnalogIntOutputRequest("AO_1", 42));
 
         Commands.CreateEntity(
-            new ControllerRef(cell, controller),
+            new NovaControllerId(cell, controller),
             new AnalogFloatOutputRequest("AO_2", 3.14));
 
         Console.WriteLine("[SetControllerIO] Entities queued for spawning.");
@@ -58,8 +58,8 @@ public class SetControllerIOSystem : SystemBase
 
         foreach (var entity in _q.Entities)
         {
-            var controllerRef = _q.Get<ControllerRef>(entity);
-            var key = (controllerRef.Cell, controllerRef.Controller);
+            var controllerId = _q.Get<NovaControllerId>(entity);
+            var key = (controllerId.Cell, controllerId.Controller);
             if (!batches.ContainsKey(key))
                 batches[key] = [];
 

@@ -26,7 +26,7 @@ internal static class Description<T> where T : IComponent
     /// <summary>Emits the type's own description. Use <see cref="Use"/> to avoid repeats.</summary>
     public static readonly Action<EntityCommandBuffer> Apply = commands =>
     {
-        var self = EntityRef.OfComponentType<T>();
+        var self = CommandTarget.OfComponentType<T>();
         commands.AddComponent(self, new ComponentInfo(ComponentTypeId.Of<T>().TypeName));
         T.Describe(commands, self);
     };

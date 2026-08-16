@@ -11,5 +11,5 @@ public interface IComponent
     /// this component type — to attach components describing the type. Called once by the
     /// SDK for every component type a system uses.
     /// </summary>
-    static virtual void Describe(EntityCommandBuffer commands, EntityRef self) { }
+    static virtual void Describe(EntityCommandBuffer commands, CommandTarget self) { }
 }

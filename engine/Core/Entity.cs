@@ -9,12 +9,12 @@ public readonly record struct Entity(ulong Id);
 /// The target of a command. Either a concrete entity, or the entity representing
 /// a component type — which the coordinator resolves by name and creates on first use.
 /// </summary>
-public readonly record struct EntityRef(ulong EntityId, string? ComponentType = null)
+public readonly record struct CommandTarget(ulong EntityId, string? ComponentType = null)
 {
-    public static EntityRef OfComponentType(string typeName) => new(0, typeName);
+    public static CommandTarget OfComponentType(string typeName) => new(0, typeName);
 
-    public static EntityRef OfComponentType<T>() where T : IComponent =>
+    public static CommandTarget OfComponentType<T>() where T : IComponent =>
         OfComponentType(ComponentTypeId.Of<T>().TypeName);
 
-    public static implicit operator EntityRef(Entity entity) => new(entity.Id);
+    public static implicit operator CommandTarget(Entity entity) => new(entity.Id);
 }

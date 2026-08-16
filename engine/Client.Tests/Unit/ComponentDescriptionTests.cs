@@ -10,7 +10,7 @@ public readonly record struct TestCategory(string Name) : IComponent;
 
 public record struct TestDescribed(int Value) : IComponent
 {
-    public static void Describe(EntityCommandBuffer commands, EntityRef self)
+    public static void Describe(EntityCommandBuffer commands, CommandTarget self)
     {
         commands.AddComponent(self, new TestSetting());
         commands.AddComponent(self, new TestCategory("Control"));

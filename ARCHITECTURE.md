@@ -83,7 +83,7 @@ public readonly record struct Category(string Name) : IComponent;
 
 public record struct PidSettings(float Kp, float Ki, bool Enabled) : IComponent
 {
-    public static void Describe(EntityCommandBuffer commands, EntityRef self)
+    public static void Describe(EntityCommandBuffer commands, CommandTarget self)
     {
         commands.AddComponent(self, new Setting());
         commands.AddComponent(self, new Category("Control"));
@@ -107,6 +107,55 @@ Because the attachments are ordinary components on an ordinary entity, an open
 set of user-defined contracts is expressed without the engine knowing what any of
 them mean, and "which component types carry `Setting`" is an ordinary entity
 query. The description is world data, so it outlives the process that sent it.
+
+### Entity References
+
+The engine has no relationship primitive. One entity points at another with an
+ordinary component holding an `Entity` field, governed by one naming rule:
+
+| Suffix | Field type | Means |
+| ------ | ---------- | ----- |
+| `Ref`  | `Entity`   | A reference to another entity **in this world**. |
+| `Id`   | `string`   | A foreign key into an **external system**. |
+
+```csharp
+public readonly record struct ParentRef(Entity Parent) : IComponent;      // in-world
+public record struct NovaControllerId(string Cell, string Controller);   // external
+```
+
+A `Ref` component holds exactly one `Entity`, named for the role the target
+plays. Never a raw `ulong`, never a string. Where an entity holds two references
+of the same kind, the role qualifies the prefix — `SourceControllerRef`,
+`TargetControllerRef`. Do not name a component `EntityRef`; untyped references
+are role-qualified too (`OwnerRef`, `TargetRef`).
+
+`ParentRef` is the one relation the engine defines, in `Engine.Core`. Domain
+relations belong in that domain's shared components assembly — component identity
+is the full type name, so the same relation declared twice in two namespaces
+silently never matches.
+
+`Entity` has a custom MessagePack formatter and serialises as a bare integer, so
+a reference is `{"Parent":7}` on the wire rather than a nested map.
+
+#### Dereferencing
+
+A query only ships the entities it matches, so a system cannot look up an
+arbitrary entity by id. To read the target of a reference, declare a **second
+query** matching the target entities and index it:
+
+```csharp
+protected override void OnCreate()
+{
+    _children = NewQuery().With(Query.ReadOnly<ParentRef>());
+    _parents  = NewQuery().With(Query.ReadOnly<Transform3D>());
+}
+```
+
+Both queries are populated from the same shard set in the same tick, so this
+costs extra **bandwidth**, not an extra round trip. Multi-hop traversal is not:
+following a chain of references one level per tick means one tick of latency per
+hop. Where a hop is hot, denormalise — cache the resolved value on the entity as
+its own component and let one system keep it current.
 
 ### Archetype
 
