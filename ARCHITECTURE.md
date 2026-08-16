@@ -177,9 +177,9 @@ queue groups.
 | Stage | Purpose |
 | ----- | ------- |
 | Constructor | Declare queries and take dependencies. Fields are `readonly`. |
-| `OnAdd` | The system joined a world. Buffer initial commands, acquire world-scoped resources. |
+| `OnAdd` | The system joined a world. Acquire world-scoped resources. |
 | `OnUpdateAsync` | One tick. |
-| `OnRemove` | The system left the world. Release resources. |
+| `OnRemove` | The system left the world. Release what `OnAdd` acquired. |
 
 Queries are declared in the **constructor**, not in `OnAdd` — they describe what
 the system *is*, not which world it currently belongs to. `NewQuery` throws once
@@ -187,6 +187,14 @@ the system has been added, so the declaration cannot drift into a lifecycle hook
 This keeps query fields `readonly` and non-null from construction, and makes
 `OnAdd`/`OnRemove` a genuine cycle: the same instance can be removed from a world
 and added again without accumulating duplicate query registrations.
+
+Collaborators are injected, not constructed internally, so a system owns no
+resource it did not receive and can be tested against a substitute:
+
+```csharp
+using var novaClient = new NovaIoClient(baseUrl);
+world.AddSystem(new SetControllerIOSystem(novaClient));
+```
 
 ```csharp
 public class MovementSystem : SystemBase
@@ -200,12 +208,24 @@ public class MovementSystem : SystemBase
             .With(Query.ReadOnly<Velocity>());
     }
 
-    protected override void OnAdd() =>
-        Commands.CreateEntity(new Position(0f, 0f, 0f), new Velocity(1f, 0f, 0f));
-
     protected override Task OnUpdateAsync() { /* ... */ }
 }
 ```
+
+#### World-level commands
+
+Seed data, fixtures and demo entities are not system logic, so they are not
+created by systems. `World` carries its own command buffer for changes made
+outside any system:
+
+```csharp
+world.Commands.CreateEntity(new Position(0f, 0f, 0f), new Velocity(1f, 0f, 0f));
+await world.FlushAsync();
+```
+
+`FlushAsync` waits for the coordinator before publishing, so commands issued
+before it starts are not lost. Systems keep their own `Commands` buffer for
+structural changes that *are* part of their logic; those flush every tick.
 
 ### Query
 

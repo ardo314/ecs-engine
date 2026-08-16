@@ -10,8 +10,10 @@ public class SetControllerIOSystem : SystemBase
     private readonly NovaIoClient _novaClient;
     private ulong _tickCount;
 
-    public SetControllerIOSystem()
+    public SetControllerIOSystem(NovaIoClient novaClient)
     {
+        _novaClient = novaClient;
+
         _q = NewQuery()
             .With(Query.ReadOnly<NovaControllerId>())
             .With(Query.ReadWrite<IoOutputState>())
@@ -19,39 +21,6 @@ public class SetControllerIOSystem : SystemBase
                 Query.ReadOnly<DigitalOutputRequest>(),
                 Query.ReadOnly<AnalogIntOutputRequest>(),
                 Query.ReadOnly<AnalogFloatOutputRequest>());
-
-        var novaBaseUrl = Environment.GetEnvironmentVariable("NOVA_BASE_URL") ?? "http://localhost:80";
-        var novaToken = Environment.GetEnvironmentVariable("NOVA_ACCESS_TOKEN") ?? "";
-
-        _novaClient = new NovaIoClient(novaBaseUrl);
-        if (!string.IsNullOrEmpty(novaToken))
-            _novaClient.SetAuthToken(novaToken);
-    }
-
-    protected override void OnAdd()
-    {
-        // Spawn example IO entities
-        var cell = Environment.GetEnvironmentVariable("NOVA_CELL") ?? "cell";
-        var controller = Environment.GetEnvironmentVariable("NOVA_CONTROLLER") ?? "ur10e";
-
-        Commands.CreateEntity(
-            new NovaControllerId(cell, controller),
-            new DigitalOutputRequest("DO_1", true));
-
-        Commands.CreateEntity(
-            new NovaControllerId(cell, controller),
-            new AnalogIntOutputRequest("AO_1", 42));
-
-        Commands.CreateEntity(
-            new NovaControllerId(cell, controller),
-            new AnalogFloatOutputRequest("AO_2", 3.14));
-
-        Console.WriteLine("[SetControllerIO] Entities queued for spawning.");
-    }
-
-    protected override void OnRemove()
-    {
-        _novaClient.Dispose();
     }
 
     protected override async Task OnUpdateAsync()

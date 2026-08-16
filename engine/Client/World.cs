@@ -1,3 +1,6 @@
+using Engine.Core;
+using NATS.Client.Core;
+
 namespace Client;
 
 /// <summary>
@@ -6,6 +9,9 @@ namespace Client;
 /// </summary>
 /// <example>
 /// <code>
+/// world.Commands.CreateEntity(new Position(0f, 0f, 0f));
+/// await world.FlushAsync();
+///
 /// var movement = new MovementSystem(dep);
 /// world.AddSystem(movement);
 /// await ecs.WaitForShutdownAsync();
@@ -29,6 +35,26 @@ public sealed class World : IAsyncDisposable
     public string Name { get; }
 
     public string NatsUrl => _ecs.NatsUrl;
+
+    /// <summary>
+    /// Buffers structural changes made outside any system — seed data, fixtures and
+    /// one-off edits. Apply them with <see cref="FlushAsync"/>.
+    /// </summary>
+    public EntityCommandBuffer Commands { get; } = new();
+
+    /// <summary>
+    /// Applies everything buffered in <see cref="Commands"/>, waiting for the
+    /// coordinator to come up first so the commands are not published into the void.
+    /// </summary>
+    public async Task FlushAsync(CancellationToken cancellationToken = default)
+    {
+        if (!Commands.HasPendingCommands) return;
+
+        await using var nats = new NatsConnection(new NatsOpts { Url = NatsUrl });
+        await nats.ConnectAsync();
+        await CommandPublisher.WaitForCoordinatorAsync(nats, cancellationToken);
+        await CommandPublisher.PublishAsync(nats, Commands, cancellationToken);
+    }
 
     /// <summary>
     /// Runs <paramref name="system"/>: invokes OnAdd, connects to the transport,

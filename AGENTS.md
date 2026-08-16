@@ -111,7 +111,12 @@ ecs-engine/
   added to a world.
 - System lifecycle is constructor → `OnAdd` → `OnUpdateAsync` → `OnRemove`.
   `OnAdd`/`OnRemove` track world membership and may fire more than once on the
-  same instance, so they must be idempotent. Buffer seed commands in `OnAdd`.
+  same instance, so they must be idempotent.
+- Inject collaborators (HTTP clients, etc.) through the system constructor. A
+  system must not construct or dispose a resource it was not given.
+- Seed, fixture and demo entities are not system logic — create them outside
+  systems with `world.Commands` and `await world.FlushAsync()`. A system's own
+  `Commands` buffer is only for structural changes that are part of its logic.
 - Each system process runs **exactly one system function** — never multiplex
   multiple systems in a single process.
 - Horizontal scaling is done by launching more instances of the same system
