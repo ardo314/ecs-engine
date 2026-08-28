@@ -3,6 +3,6 @@ server {
     root /usr/share/nginx/html;
 
     location / {
-        try_files $uri $uri/ ${BASE_PATH}index.html;
+        try_files $uri $uri/ __BASE_PATH__index.html;
     }
 }

@@ -3,16 +3,20 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 COPY . .
+
+# Vite bakes the base path into asset URLs, so BASE_PATH is fixed at build time.
 ARG BASE_PATH=/
 ARG EDITOR_BACKEND_URL=http://localhost:5000
 ENV VITE_EDITOR_BACKEND_URL=${EDITOR_BACKEND_URL}
-RUN BASE_PATH=$(printf '/%s/' "$BASE_PATH" | sed 's|//*|/|g') && \
-    export BASE_PATH && npm run build
+RUN set -eu; \
+    BASE_PATH=$(printf '/%s/' "$BASE_PATH" | sed 's|//*|/|g'); \
+    export BASE_PATH; \
+    npm run build; \
+    mkdir -p "/site${BASE_PATH}"; \
+    cp -a dist/. "/site${BASE_PATH}"; \
+    sed "s|__BASE_PATH__|${BASE_PATH}|g" nginx.conf.template > /default.conf
 
 FROM nginx:alpine
-ENV BASE_PATH=/
-COPY --from=build /app/dist /app/dist
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
-COPY 40-base-path.envsh /docker-entrypoint.d/40-base-path.envsh
-RUN chmod +x /docker-entrypoint.d/40-base-path.envsh
+COPY --from=build /site /usr/share/nginx/html
+COPY --from=build /default.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

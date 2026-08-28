@@ -58,8 +58,6 @@ services:
         EDITOR_BACKEND_URL: ${EDITOR_BACKEND_URL:-http://localhost:5000}
     ports:
       - "3000:80"
-    environment:
-      BASE_PATH: ${EDITOR_FRONTEND_BASE_PATH:-/}
     depends_on:
       - editor-backend
     develop:
