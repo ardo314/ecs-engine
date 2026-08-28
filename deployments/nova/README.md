@@ -48,15 +48,11 @@ All configuration is via environment variables.
 | `ECS_REGISTRY_USER` | *(unset)* | Pull credentials; both parts required |
 | `ECS_REGISTRY_PASSWORD` | *(unset)* | Pull credentials; both parts required |
 | `ECS_DRY_RUN` | `false` | Print manifests instead of calling NOVA |
+| `HEALTH_PORT` | *(unset)* | Serve `/health`, and idle after installing, instead of exiting |
 
 `ECS_SYSTEM_IMAGES` entries may be a bare image (`ghcr.io/acme/movement-system:1.0`,
 whose repository segment becomes the app name) or an explicit `name=image` pair.
 Names are reduced to RFC 1035 labels, as NOVA requires.
-
-When the installer itself runs as a NOVA app, leave `NOVA_BASE_URL` and
-`NOVA_CELL` unset: it falls back to the `NOVA_API` and `CELL_NAME` variables NOVA
-injects into every app container. `NOVA_API` may carry an `/api/v1` suffix or no
-scheme; both are normalised away, since the client appends its own API path.
 
 Exit codes: `0` success, `1` API or network failure, `2` bad configuration.
 
@@ -82,6 +78,26 @@ docker run --rm \
 Re-running is an upgrade: any app whose name already exists is deleted, waited
 out, and recreated from the new manifest. There is no uninstall mode — remove
 apps from the NOVA UI or via the app API.
+
+## Running the installer as a NOVA app
+
+Leave `NOVA_BASE_URL` and `NOVA_CELL` unset — the installer falls back to the
+`NOVA_API` and `CELL_NAME` variables NOVA injects into every app container.
+`NOVA_API` may carry an `/api/v1` suffix or no scheme; both are normalised away,
+since the client appends its own API path.
+
+Set `HEALTH_PORT` to the app's port. The installer then serves `/health` from the
+moment installation starts and keeps serving after it finishes, instead of
+exiting — NOVA restarts an app whose probe stops answering, which would reinstall
+the whole stack in a loop. Install the installer with `port: 8080`,
+`health_path: /health` and:
+
+```json
+"environment": [{ "name": "HEALTH_PORT", "value": "8080" }]
+```
+
+A restart of the installer app still reinstalls the stack, since every existing
+app is deleted and recreated.
 
 ## Building
 

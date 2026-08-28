@@ -28,6 +28,11 @@ try
     if (string.IsNullOrEmpty(options.AccessToken))
         Console.WriteLine("Warning: NOVA_ACCESS_TOKEN is empty; requests will be unauthenticated.");
 
+    // Started before the install so the probe is already answering while apps go in.
+    using var health = HealthEndpoint.StartFromEnvironment();
+    if (health is not null)
+        Console.WriteLine($"Health endpoint listening on port {health.Port}");
+
     using var client = new NovaAppClient(options.NovaBaseUrl, options.Cell, options.AccessToken);
     var existing = (await client.ListAppNamesAsync(cts.Token)).ToHashSet(StringComparer.Ordinal);
 
@@ -49,6 +54,20 @@ try
     }
 
     Console.WriteLine($"\nDone. {manifests.Count} apps installed in cell '{options.Cell}'.");
+
+    if (health is null) return 0;
+
+    // NOVA restarts an app that stops answering its probe, which would reinstall the stack.
+    Console.WriteLine("Install complete; serving health probes until stopped.");
+    try
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        // Shutdown requested.
+    }
+
     return 0;
 }
 catch (InstallerConfigurationException e)
