@@ -16,9 +16,9 @@ Key concepts:
 - **Coordinator** (`engine/`) — single authority for world state.
 - **Systems** — stateless processes, each running exactly one system function.
 - **NATS** — message transport between coordinator, systems, and editor.
-- **Client** (`engine/Client/`) — C# SDK for authoring systems that
-  connect to the coordinator via NATS. Other language SDKs live outside
-  `engine/`.
+- **Client** (`clients/csharp/`) — C# SDK for authoring systems that
+  connect to the coordinator via NATS. Other language SDKs live under
+  `clients/`.
 
 ---
 
@@ -26,16 +26,20 @@ Key concepts:
 
 ```
 ecs-engine/
-├── engine/                     # C# solution — Coordinator + Client SDK
+├── engine/                     # C# solution — Coordinator
 │   ├── Engine.sln
-│   ├── Engine/                 # Coordinator (self-contained, includes core types)
-│   │   ├── Engine.csproj
-│   │   ├── Program.cs
-│   │   └── Core/               # ECS primitives (Entity, Messages, Serialization…)
-│   └── Client/                 # C# system-authoring SDK (self-contained)
-│       ├── Client.csproj
-│       ├── SystemRunner.cs
-│       └── Core/               # Own copy of ECS primitives
+│   └── Engine/                 # Coordinator (self-contained, includes core types)
+│       ├── Engine.csproj
+│       ├── Program.cs
+│       └── Core/               # ECS primitives (Entity, Messages, Serialization…)
+├── clients/                    # Language-specific SDKs
+│   └── csharp/                 # C# client SDK
+│       ├── CSharp.sln
+│       ├── Client/             # SDK library (self-contained)
+│       │   ├── Client.csproj
+│       │   ├── SystemRunner.cs
+│       │   └── Core/           # Own copy of ECS primitives
+│       └── Client.Tests/
 ├── editor/
 │   ├── frontend/               # React + Vite web app
 │   └── backend/                # ASP.NET Core Minimal API
