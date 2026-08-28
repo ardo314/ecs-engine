@@ -415,18 +415,6 @@ public class EntityQuery
         };
     }
 
-    /// <summary>
-    /// All component type names this query needs data for (required + optional + excluded).
-    /// Used by the runner to know which shard types to pass in.
-    /// </summary>
-    internal HashSet<string> GetAllTypeNames()
-    {
-        var set = new HashSet<string>(_allTypes);
-        foreach (var e in _excluded)
-            set.Add(e);
-        return set;
-    }
-
     private void ThrowIfFrozen()
     {
         if (_frozen)

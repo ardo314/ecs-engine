@@ -110,15 +110,4 @@ public abstract class SystemBase
     /// </summary>
     internal string[] GetAllWriteTypes() =>
         _queries.SelectMany(q => q.ToDescriptor().WriteTypes).Distinct().ToArray();
-
-    /// <summary>
-    /// Union of all component type names needed by any query (for shard subscription).
-    /// </summary>
-    internal HashSet<string> GetAllTypeNames()
-    {
-        var set = new HashSet<string>();
-        foreach (var q in _queries)
-            set.UnionWith(q.GetAllTypeNames());
-        return set;
-    }
 }

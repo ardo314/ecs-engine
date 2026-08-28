@@ -135,7 +135,10 @@ is the full type name, so the same relation declared twice in two namespaces
 silently never matches.
 
 `Entity` has a custom MessagePack formatter and serialises as a bare integer, so
-a reference is `{"Parent":7}` on the wire rather than a nested map.
+a reference is `{"Parent":7}` on the wire rather than a nested map. `Entity`,
+`ParentRef` and that formatter are authoring-side types and live in the client
+SDK only — the coordinator addresses entities by raw id and stores component
+payloads as opaque bytes, so it never resolves a reference.
 
 #### Dereferencing
 
@@ -272,14 +275,19 @@ per tag.
 
 ```
 ecs-engine/
-├── engine/                     # C# solution — Coordinator + Client SDK
+├── engine/                     # C# solution — Coordinator
 │   ├── Engine.sln
-│   ├── Engine/
+│   ├── Engine/                 # Self-contained: includes the core types it needs
 │   │   ├── Engine.csproj
 │   │   └── Program.cs
-│   └── Client/                 # System-authoring SDK (class library)
-│       ├── Client.csproj
-│       └── SystemRunner.cs
+│   └── Engine.Tests/
+├── clients/                    # Language-specific SDKs
+│   └── csharp/
+│       ├── CSharp.sln
+│       ├── Client/             # System-authoring SDK (class library)
+│       │   ├── Client.csproj
+│       │   └── SystemRunner.cs
+│       └── Client.Tests/
 ├── editor/
 │   ├── frontend/               # React + Vite web app
 │   │   ├── package.json
@@ -307,27 +315,27 @@ cluster.
 
 | Subject                             | Direction               | Payload                                         | Purpose                                           |
 | ----------------------------------- | ----------------------- | ----------------------------------------------- | ------------------------------------------------- |
-| `engine.coord.tick`                 | Coordinator → Systems   | `TickStart { TickId, Dt }`                      | Signals start of a new tick.                      |
 | `engine.coord.tick.done`            | Systems → Coordinator   | `TickAck { TickId, InstanceId }`                | System instance acknowledges tick completion.     |
-| `engine.entity.create`              | Coordinator → *         | `EntityCreated { Entity, Archetype }`           | Broadcasts entity creation.                       |
-| `engine.entity.destroy`             | Coordinator → *         | `EntityDestroyed { Entity }`                    | Broadcasts entity destruction.                    |
-| `engine.entity.spawn.request`       | Systems → Coordinator   | `EntitySpawnRequest { Types, Data }`            | System requests entity creation.                  |
-| `engine.component.set.<system>`     | Coordinator → System(s) | `ComponentShard` or `DataDone` sentinel         | Sends component data to a system.                 |
-| `engine.component.changed.<system>` | Systems → Coordinator   | `ComponentShard` or `ChangesDone` sentinel      | System publishes mutated data back.               |
+| `engine.entity.create`              | Coordinator → *         | `EntityCreated { EntityId, ComponentTypes }`    | Broadcasts entity creation.                       |
+| `engine.entity.destroyed`           | Coordinator → *         | `EntityDestroyed { EntityId }`                  | Broadcasts entity destruction.                    |
+| `engine.entity.spawn.request`       | Any → Coordinator       | `EntitySpawnRequest { ComponentTypes, ComponentData }` | Requests entity creation.                   |
+| `engine.entity.destroy.request`     | Any → Coordinator       | `EntityDestroyRequest { EntityIds }`            | Requests entity destruction.                      |
+| `engine.component.set.<system>`     | Coordinator → System(s) | `ComponentShard { TickId, Entities, ComponentType, Data }` | Sends component data to a system.      |
+| `engine.component.changed.<system>` | Systems → Coordinator   | `ComponentChanges { TickId, ComponentType, Entities, Data }` | System publishes mutated data back.  |
 | `engine.entity.component.add`       | Any → Coordinator       | `ComponentAddRequest { Target, ComponentType, Data }` | Upserts a component on the target.                |
 | `engine.entity.component.remove`    | Any → Coordinator       | `ComponentRemoveRequest { Target, ComponentType }` | Removes a component from the target.              |
-| `engine.system.register`            | System → Coordinator    | `SystemDescriptor { Name, Query, InstanceId }`  | System registers itself on startup.               |
+| `engine.system.register`            | System → Coordinator    | `SystemDescriptor { Name, InstanceId, Queries }` | System registers itself on startup.              |
 | `engine.system.unregister`          | System → Coordinator    | `SystemUnregister { Name, InstanceId }`         | System unregisters on shutdown.                   |
 | `engine.system.schedule.<system>`   | Coordinator → System(s) | `SystemSchedule { TickId, ShardCount, TaggedTypes }` | Tells system to execute on a shard, with the tick's tag resolution. |
-| `engine.system.heartbeat`           | Systems → Coordinator   | `Heartbeat { InstanceId, System, Load }`        | Periodic health & load report.                    |
 | `engine.query.systems`              | Any → Coordinator       | (empty)                                          | Request/reply: returns registered systems + stages. |
 | `engine.query.entities`             | Any → Coordinator       | `QueryEntitiesRequest { ComponentFilter?, AnyTypes? }` | Request/reply: returns matching entities + data.  |
 | `engine.watch.subscribe`            | Any → Coordinator       | `WatchRequest { WatchId, Include*, Filter }`    | Request/reply: register a watch subscription.     |
 | `engine.watch.unsubscribe`          | Any → Coordinator       | `WatchCancel { WatchId }`                       | Cancels an active watch subscription.             |
 | `engine.watch.data.<watchId>`       | Coordinator → Watcher   | `WatchData { TickId, Systems?, Entities? }`     | Per-tick data pushed to an active watcher.        |
 
-> JetStream is used for `engine.component.*` subjects so that late-joining
-> system instances can replay the latest state.
+> All subjects currently use core NATS. Systems are driven by
+> `engine.system.schedule.<system>` rather than a global tick broadcast, so a
+> system only wakes when it has matching entities.
 
 ---
 

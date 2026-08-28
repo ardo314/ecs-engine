@@ -2,12 +2,6 @@ using System.Linq;
 
 namespace Engine.Core.Messages;
 
-public record TickStart
-{
-    public ulong TickId { get; init; }
-    public float Dt { get; init; }
-}
-
 public record TickAck
 {
     public ulong TickId { get; init; }

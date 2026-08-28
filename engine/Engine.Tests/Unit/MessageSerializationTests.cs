@@ -35,7 +35,7 @@ public class MessageSerializationTests
     {
         var request = new ComponentAddRequest
         {
-            Target = new Entity(42),
+            Target = new CommandTarget(42),
             ComponentType = "Position",
             Data = [7]
         };

@@ -1,8 +1,12 @@
 using Engine.Core;
 using MessagePack;
 
-namespace Engine.Tests.Unit;
+namespace Client.Tests.Unit;
 
+/// <summary>
+/// The entity formatter only matters where components are actually deserialized —
+/// the client SDK. The coordinator passes component payloads through as opaque bytes.
+/// </summary>
 [Trait("Category", "Unit")]
 public class EntityReferenceSerializationTests
 {
