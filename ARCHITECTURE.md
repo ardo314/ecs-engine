@@ -300,6 +300,8 @@ ecs-engine/
 │           ├── EditorBackend.csproj
 │           └── Program.cs
 ├── examples/                   # Example components & systems
+├── deployments/                # Target-specific installers
+│   └── nova/                   # Wandelbots NOVA app installer + NATS image
 ├── .devcontainer/              # Dev container (build environment)
 ├── ARCHITECTURE.md             # This file
 ├── AGENTS.md                   # AI agent guidelines
@@ -437,6 +439,42 @@ payload.
 | Coordinator crash | JetStream retains state; new coordinator replays and resumes.             |
 | NATS disconnect   | NATS.Net reconnects automatically; systems buffer and retry.              |
 | Slow system       | Scale horizontally (more queue group instances). Tick deadline enforced.  |
+
+---
+
+## Deployment
+
+Every process ships as a container image. Locally they are wired together by
+`docker-compose.yml`.
+
+### Health endpoint
+
+The coordinator and system processes are headless, which orchestrators that
+health-probe over HTTP treat as unhealthy. `HealthEndpoint` — duplicated into
+`Engine` and the C# client SDK, following the same asymmetric-copy rule as the
+core types — answers `GET /health` and `GET /app_icon.png` from a bare
+`TcpListener`, so console apps stay on the `dotnet/runtime` base image instead of
+`dotnet/aspnet`. It only listens when `HEALTH_PORT` is set, so local and Compose
+runs are unchanged.
+
+### Wandelbots NOVA
+
+NOVA exposes no direct Kubernetes access, so `deployments/nova` installs the
+stack through the NOVA app API (`POST /api/v2/cells/{cell}/apps`). Each process
+becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
+
+| App | Serves |
+| --- | --- |
+| `ecs-engine` | Coordinator |
+| `ecs-editor-api` | Editor backend, mounted at its public path via `BASE_PATH` |
+| `ecs-editor` | Editor frontend |
+| `ecs-<system>` | One app per system image |
+
+No broker is installed: NOVA runs its own NATS and injects the address as
+`NATS_BROKER`, which both the coordinator and `NatsConfig` read when `NATS_URL`
+is unset. The coordinator is installed before anything that talks to it.
+Re-running the installer deletes and recreates existing apps, so it doubles as an
+upgrade.
 
 ---
 

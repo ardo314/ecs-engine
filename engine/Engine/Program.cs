@@ -7,10 +7,20 @@ using NATS.Client.Core;
 
 Serialization.Initialize();
 
-var natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+// NATS_BROKER is injected by hosts that supply their own broker, such as Wandelbots NOVA.
+var natsUrl = Environment.GetEnvironmentVariable("NATS_URL");
+if (string.IsNullOrWhiteSpace(natsUrl))
+    natsUrl = Environment.GetEnvironmentVariable("NATS_BROKER");
+if (string.IsNullOrWhiteSpace(natsUrl))
+    natsUrl = "nats://localhost:4222";
+
 var tickRate = int.TryParse(Environment.GetEnvironmentVariable("TICK_RATE"), out var tr) ? tr : 20;
 
 Console.WriteLine("Engine coordinator starting...");
+
+using var health = HealthEndpoint.StartFromEnvironment();
+if (health is not null)
+    Console.WriteLine($"Health endpoint listening on port {health.Port}");
 
 await using var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
 await nats.ConnectAsync();

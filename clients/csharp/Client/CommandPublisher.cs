@@ -15,7 +15,7 @@ internal static class CommandPublisher
     /// Polls the coordinator's query endpoint until it answers, so commands
     /// published afterwards are not dropped into the void.
     /// </summary>
-    internal static async Task WaitForCoordinatorAsync(NatsConnection nats, CancellationToken ct)
+    internal static async Task WaitForCoordinatorAsync(INatsConnection nats, CancellationToken ct)
     {
         var announced = false;
         while (true)
@@ -45,7 +45,7 @@ internal static class CommandPublisher
     /// Publishes and clears every command buffered in <paramref name="ecb"/>.
     /// </summary>
     internal static async Task PublishAsync(
-        NatsConnection nats, EntityCommandBuffer ecb, CancellationToken ct)
+        INatsConnection nats, EntityCommandBuffer ecb, CancellationToken ct)
     {
         if (!ecb.HasPendingCommands) return;
 

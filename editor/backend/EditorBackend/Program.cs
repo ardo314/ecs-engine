@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Client;
 using EditorBackend;
 using Engine.Core;
 using Engine.Core.Messages;
@@ -9,10 +10,10 @@ Serialization.Initialize();
 
 var builder = WebApplication.CreateBuilder(args);
 
-var natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
-var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
+var natsOpts = NatsConfig.CreateOpts();
+var nats = new NatsConnection(natsOpts);
 await nats.ConnectAsync();
-Console.WriteLine($"[Editor] Connected to NATS at {natsUrl}");
+Console.WriteLine($"[Editor] Connected to NATS at {natsOpts.Url}");
 
 builder.Services.AddSingleton(nats);
 builder.Services.AddSingleton<WsBroadcaster>();

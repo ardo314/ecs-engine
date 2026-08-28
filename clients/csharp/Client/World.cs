@@ -34,7 +34,7 @@ public sealed class World : IAsyncDisposable
 
     public string Name { get; }
 
-    public string NatsUrl => _ecs.NatsUrl;
+    public INatsConnection Nats => _ecs.Nats;
 
     /// <summary>
     /// Buffers structural changes made outside any system — seed data, fixtures and
@@ -50,10 +50,8 @@ public sealed class World : IAsyncDisposable
     {
         if (!Commands.HasPendingCommands) return;
 
-        await using var nats = new NatsConnection(new NatsOpts { Url = NatsUrl });
-        await nats.ConnectAsync();
-        await CommandPublisher.WaitForCoordinatorAsync(nats, cancellationToken);
-        await CommandPublisher.PublishAsync(nats, Commands, cancellationToken);
+        await CommandPublisher.WaitForCoordinatorAsync(Nats, cancellationToken);
+        await CommandPublisher.PublishAsync(Nats, Commands, cancellationToken);
     }
 
     /// <summary>
@@ -65,7 +63,7 @@ public sealed class World : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(system);
 
         var cts = new CancellationTokenSource();
-        var runner = new SystemRunner(system, NatsUrl);
+        var runner = new SystemRunner(system, Nats);
 
         lock (_gate)
         {
@@ -140,7 +138,6 @@ public sealed class World : IAsyncDisposable
     {
         try
         {
-            await runner.ConnectAsync(ct);
             Console.WriteLine($"[{system.SystemName}] Starting...");
             await runner.RunAsync(ct);
         }
@@ -154,7 +151,6 @@ public sealed class World : IAsyncDisposable
         finally
         {
             system.InvokeOnRemove();
-            await runner.DisposeAsync();
         }
     }
 }

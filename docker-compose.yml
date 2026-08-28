@@ -45,6 +45,8 @@ services:
       - "5000:5000"
     environment:
       NATS_URL: nats://nats:4222
+      NATS_USER: ${NATS_USER:-}
+      NATS_TOKEN: ${NATS_TOKEN:-}
       BASE_PATH: ${EDITOR_BACKEND_BASE_PATH:-/}
     develop:
       watch:

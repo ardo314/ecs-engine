@@ -127,33 +127,22 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     // ── Tests ─────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ConnectAsync_EstablishesConnection()
+    public void Constructor_RejectsMissingConnection()
     {
         var system = new EmptySystem();
         system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
-        await runner.ConnectAsync();
+        Assert.Throws<ArgumentNullException>(() => new SystemRunner(system, null!));
     }
 
     [Fact]
-    public async Task RunAsync_ThrowsBeforeConnect()
-    {
-        var system = new EmptySystem();
-        system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => runner.RunAsync(CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task InstanceId_IsUnique()
+    public void InstanceId_IsUnique()
     {
         var s1 = new EmptySystem();
         var s2 = new EmptySystem();
         s1.InvokeOnAdd();
         s2.InvokeOnAdd();
-        await using var r1 = new SystemRunner(s1, _fixture.Url);
-        await using var r2 = new SystemRunner(s2, _fixture.Url);
+        var r1 = new SystemRunner(s1, _nats);
+        var r2 = new SystemRunner(s2, _nats);
         Assert.NotEqual(r1.InstanceId, r2.InstanceId);
         Assert.NotEmpty(r1.InstanceId);
     }
@@ -163,8 +152,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
     {
         var system = new SpawnSystem(new TestPosition { X = 77.0f, Y = 88.0f });
         system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
-        await runner.ConnectAsync();
+        var runner = new SystemRunner(system, _nats);
 
         // ECB is flushed on connect in RunAsync, but we need to manually flush here since we don't call RunAsync
         // Instead, the ECB gets flushed when RunAsync starts. Let's use a short-lived RunAsync.
@@ -193,9 +181,8 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         var system = new ReadPositionSystem();
         var name = system.SystemName;
         system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
+        var runner = new SystemRunner(system, _nats);
 
-        await runner.ConnectAsync();
         using var cts = new CancellationTokenSource();
         var runTask = runner.RunAsync(cts.Token);
 
@@ -220,9 +207,8 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         var system = new ReadPositionSystem();
         var name = system.SystemName;
         system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
+        var runner = new SystemRunner(system, _nats);
 
-        await runner.ConnectAsync();
         using var cts = new CancellationTokenSource();
         var runTask = runner.RunAsync(cts.Token);
 
@@ -251,8 +237,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
             new TestPosition { X = 0.0f, Y = 0.0f },
             new TestVelocity { Vx = 10.0f, Vy = 5.0f });
         spawner.InvokeOnAdd();
-        await using var spawnRunner = new SystemRunner(spawner, _fixture.Url);
-        await spawnRunner.ConnectAsync();
+        var spawnRunner = new SystemRunner(spawner, _nats);
         // Run briefly to flush ECB
         using var spawnCts = new CancellationTokenSource();
         var spawnTask = spawnRunner.RunAsync(spawnCts.Token);
@@ -269,8 +254,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         // Run a system that reads velocity and writes position
         var system = new TickProcessorSystem();
         system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
-        await runner.ConnectAsync();
+        var runner = new SystemRunner(system, _nats);
         using var cts = new CancellationTokenSource();
         var runTask = runner.RunAsync(cts.Token);
 
@@ -297,8 +281,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
             new TestPosition { X = 0.0f, Y = 0.0f },
             new TestVelocity { Vx = 10.0f, Vy = 5.0f });
         spawner.InvokeOnAdd();
-        await using var spawnRunner = new SystemRunner(spawner, _fixture.Url);
-        await spawnRunner.ConnectAsync();
+        var spawnRunner = new SystemRunner(spawner, _nats);
         using var spawnCts = new CancellationTokenSource();
         var spawnTask = spawnRunner.RunAsync(spawnCts.Token);
         await Task.Delay(500);
@@ -314,8 +297,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         // Run a system that applies velocity to position
         var system = new TickProcessorSystem();
         system.InvokeOnAdd();
-        await using var runner = new SystemRunner(system, _fixture.Url);
-        await runner.ConnectAsync();
+        var runner = new SystemRunner(system, _nats);
         using var cts = new CancellationTokenSource();
         var runTask = runner.RunAsync(cts.Token);
 
