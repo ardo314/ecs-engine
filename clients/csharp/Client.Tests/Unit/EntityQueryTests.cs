@@ -306,6 +306,104 @@ public class EntityQueryTests
         Assert.Equal(3f, results[0].C2.Vx);
     }
 
+    // ── Tag joins ──────────────────────────────────────────────
+
+    [Fact]
+    public void ToDescriptor_WithAnyTagged_SetsTaggedTypes()
+    {
+        var query = new EntityQuery()
+            .With(Query.ReadOnly<TestPosition>())
+            .WithAnyTagged<TestSetting>();
+        query.Freeze();
+
+        var desc = query.ToDescriptor();
+        Assert.Contains(ComponentTypeId.Of<TestSetting>().TypeName, desc.TaggedTypes);
+    }
+
+    [Fact]
+    public void WithAnyTagged_MatchesEntitiesCarryingAResolvedType()
+    {
+        var query = new EntityQuery()
+            .With(Query.ReadOnly<TestPosition>())
+            .WithAnyTagged<TestSetting>();
+        query.Freeze();
+
+        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
+        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+
+        // Entity 1 and 2 both have Position, but only entity 1 carries the tagged type
+        var shards = MakeShards(
+            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
+            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+
+        query.Populate(shards, tickId: 1, TagResolution(velType));
+
+        Assert.Single(query.Entities);
+        Assert.Equal(1UL, query.Entities[0].Id);
+    }
+
+    [Fact]
+    public void WithAnyTagged_NoResolvedTypes_MatchesNothing()
+    {
+        var query = new EntityQuery()
+            .With(Query.ReadOnly<TestPosition>())
+            .WithAnyTagged<TestSetting>();
+        query.Freeze();
+
+        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
+        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+
+        query.Populate(shards, tickId: 1, TagResolution());
+
+        Assert.Empty(query.Entities);
+    }
+
+    [Fact]
+    public void GetTagged_ReturnsMatchedComponentsByTypeName()
+    {
+        var query = new EntityQuery()
+            .With(Query.ReadOnly<TestPosition>())
+            .WithAnyTagged<TestSetting>();
+        query.Freeze();
+
+        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
+        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+
+        var shards = MakeShards(
+            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
+            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+        query.Populate(shards, tickId: 1, TagResolution(velType));
+
+        var tagged = query.GetTagged<TestSetting>(new Entity(1)).ToList();
+
+        Assert.Single(tagged);
+        Assert.True(tagged[0].Is<TestVelocity>());
+        Assert.Equal(5f, tagged[0].As<TestVelocity>().Vx);
+    }
+
+    [Fact]
+    public void Set_TaggedType_Throws()
+    {
+        var query = new EntityQuery()
+            .With(Query.ReadOnly<TestPosition>())
+            .WithAnyTagged<TestSetting>();
+        query.Freeze();
+
+        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
+        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+
+        var shards = MakeShards(
+            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
+            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+        query.Populate(shards, tickId: 1, TagResolution(velType));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            query.Set(new Entity(1), new TestVelocity(9f, 9f)));
+    }
+
+    private static Dictionary<string, string[]> TagResolution(params string[] typeNames) =>
+        new() { [ComponentTypeId.Of<TestSetting>().TypeName] = typeNames };
+
     // ── Freeze ─────────────────────────────────────────────────
 
     [Fact]

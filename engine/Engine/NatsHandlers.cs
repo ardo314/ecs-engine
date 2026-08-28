@@ -170,8 +170,7 @@ public class NatsHandlers
         }
     }
 
-    private async Task ProcessQuerySystems(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
+    private async Task ProcessQuerySystems(INatsSub<byte[]> sub, CancellationToken cancellationToken)    {
         await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
         {
             try
@@ -202,7 +201,7 @@ public class NatsHandlers
                     request = MessagePackSerializer.Deserialize<QueryEntitiesRequest>(msg.Data);
                 }
 
-                var response = BuildEntitiesResponse(request?.ComponentFilter);
+                var response = BuildEntitiesResponse(request?.ComponentFilter, request?.AnyTypes);
                 var payload = MessagePackSerializer.Serialize(response);
                 if (msg.ReplyTo is not null)
                 {
@@ -278,16 +277,26 @@ public class NatsHandlers
         };
     }
 
-    internal QueryEntitiesResponse BuildEntitiesResponse(string[]? componentFilter)
+    internal QueryEntitiesResponse BuildEntitiesResponse(string[]? componentFilter, string[]? anyTypes = null)
     {
         IEnumerable<ulong> entities;
         if (componentFilter is { Length: > 0 })
         {
             entities = _world.GetEntitiesWith(componentFilter);
         }
+        else if (anyTypes is { Length: > 0 })
+        {
+            entities = _world.GetEntitiesWithAny(anyTypes);
+        }
         else
         {
             entities = _world.GetAllEntities();
+        }
+
+        if (componentFilter is { Length: > 0 } && anyTypes is { Length: > 0 })
+        {
+            var any = anyTypes.ToHashSet();
+            entities = entities.Where(id => _world.GetComponentTypes(id).Any(any.Contains));
         }
 
         var snapshots = new List<EntitySnapshot>();

@@ -12,7 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\engine\Client\Client.csproj" />
+    <ProjectReference Include="..\..\..\clients\csharp\Client\Client.csproj" />
   </ItemGroup>
 
 </Project>

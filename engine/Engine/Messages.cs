@@ -2,12 +2,6 @@ using System.Linq;
 
 namespace Engine.Core.Messages;
 
-public record TickStart
-{
-    public ulong TickId { get; init; }
-    public float Dt { get; init; }
-}
-
 public record TickAck
 {
     public ulong TickId { get; init; }
@@ -21,6 +15,12 @@ public record QueryDescriptor
     public string[] ExcludedTypes { get; init; } = [];
     public string[] ReadTypes { get; init; } = [];
     public string[] WriteTypes { get; init; } = [];
+
+    /// <summary>
+    /// Tag component type names. For each entry, an entity must carry at least one
+    /// component whose type entity has that component. Resolved per tick by the coordinator.
+    /// </summary>
+    public string[] TaggedTypes { get; init; } = [];
 }
 
 public record SystemDescriptor
@@ -39,6 +39,11 @@ public record SystemDescriptor
     /// Union of all write types across all queries. Used for conflict detection.
     /// </summary>
     public string[] GetAllWrites() => Queries.SelectMany(q => q.WriteTypes).Distinct().ToArray();
+
+    /// <summary>
+    /// Union of all tag types across all queries.
+    /// </summary>
+    public string[] GetAllTags() => Queries.SelectMany(q => q.TaggedTypes).Distinct().ToArray();
 }
 
 public record SystemUnregister
@@ -51,6 +56,11 @@ public record SystemSchedule
 {
     public ulong TickId { get; init; }
     public int ShardCount { get; init; }
+
+    /// <summary>
+    /// Tag component type name → the component type names carrying it this tick.
+    /// </summary>
+    public Dictionary<string, string[]> TaggedTypes { get; init; } = new();
 }
 
 public record ComponentShard
@@ -93,14 +103,14 @@ public record EntityDestroyRequest
 
 public record ComponentAddRequest
 {
-    public ulong EntityId { get; init; }
+    public CommandTarget Target { get; init; }
     public string ComponentType { get; init; } = "";
     public byte[] Data { get; init; } = [];
 }
 
 public record ComponentRemoveRequest
 {
-    public ulong EntityId { get; init; }
+    public CommandTarget Target { get; init; }
     public string ComponentType { get; init; } = "";
 }
 
@@ -123,7 +133,11 @@ public record QuerySystemsResponse
 
 public record QueryEntitiesRequest
 {
+    /// <summary>Entity must have ALL of these component types.</summary>
     public string[]? ComponentFilter { get; init; }
+
+    /// <summary>Entity must have ANY of these component types.</summary>
+    public string[]? AnyTypes { get; init; }
 }
 
 public record QueryEntitiesResponse
@@ -143,6 +157,7 @@ public record WatchRequest
     public bool IncludeSystems { get; init; }
     public bool IncludeEntities { get; init; }
     public string[]? ComponentFilter { get; init; }
+    public string[]? AnyTypes { get; init; }
 }
 
 public record WatchResponse

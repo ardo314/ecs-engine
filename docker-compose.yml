@@ -7,6 +7,7 @@ services:
       - "8222:8222"
 
   engine:
+    image: ghcr.io/ardo314/ecs-engine/engine:${IMAGE_TAG:-latest}
     build:
       context: ./engine
     depends_on:
@@ -17,10 +18,9 @@ services:
       watch:
         - action: rebuild
           path: ./engine/Engine
-        - action: rebuild
-          path: ./engine/Core
 
   movement-system:
+    image: ghcr.io/ardo314/ecs-engine/movement-system:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: examples/MovementSystem/Dockerfile
@@ -35,6 +35,7 @@ services:
           path: ./examples/MovementSystem
 
   editor-backend:
+    image: ghcr.io/ardo314/ecs-engine/editor-backend:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: editor/backend/Dockerfile
@@ -44,22 +45,25 @@ services:
       - "5000:5000"
     environment:
       NATS_URL: nats://nats:4222
+      BASE_PATH: ${EDITOR_BACKEND_BASE_PATH:-/}
     develop:
       watch:
         - action: rebuild
           path: ./editor/backend/EditorBackend
         - action: rebuild
-          path: ./engine/Core
-        - action: rebuild
-          path: ./engine/Client
+          path: ./clients/csharp/Client
 
   editor-frontend:
+    image: ghcr.io/ardo314/ecs-engine/editor-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./editor/frontend
     ports:
       - "3000:80"
     depends_on:
       - editor-backend
+    environment:
+      BASE_PATH: ${EDITOR_FRONTEND_BASE_PATH:-/}
+      EDITOR_BACKEND_URL: ${EDITOR_BACKEND_URL:-http://localhost:5000}
     develop:
       watch:
         - action: rebuild

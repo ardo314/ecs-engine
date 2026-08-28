@@ -6,7 +6,21 @@ namespace Nova.Components;
 /// Identifies which Nova cell and controller an entity belongs to.
 /// Maps to the Nova API path: /cells/{cell}/controllers/{controller}
 /// </summary>
-public record struct ControllerRef(string Cell, string Controller) : IComponent;
+/// <remarks>
+/// Deliberately denormalised onto every IO entity so systems can build Nova requests
+/// without dereferencing <see cref="ControllerRef"/>.
+/// </remarks>
+public record struct NovaControllerId(string Cell, string Controller) : IComponent;
+
+/// <summary>
+/// References the cell entity this entity belongs to.
+/// </summary>
+public record struct CellRef(Entity Cell) : IComponent;
+
+/// <summary>
+/// References the controller entity this entity belongs to.
+/// </summary>
+public record struct ControllerRef(Entity Controller) : IComponent;
 
 /// <summary>
 /// Represents a desired digital (boolean) output value to set on a controller.

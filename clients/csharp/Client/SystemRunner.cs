@@ -98,8 +98,10 @@ public class SystemRunner : IAsyncDisposable
             queueGroup: systemName,
             cancellationToken: cancellationToken);
 
-        // Flush any ECB commands from OnCreate (e.g. entity seeding)
-        await FlushEcbAsync(nats, cancellationToken);
+        // OnAdd commands are dropped if the coordinator is not subscribed yet, and a
+        // system with no entities is never scheduled — so wait for a reply before flushing.
+        await CommandPublisher.WaitForCoordinatorAsync(nats, cancellationToken);
+        await CommandPublisher.PublishAsync(nats, _system.Commands, cancellationToken);
 
         var firstSchedule = true;
 
@@ -145,7 +147,7 @@ public class SystemRunner : IAsyncDisposable
                 // Populate all queries with the shard data
                 foreach (var query in _system.GetQueries())
                 {
-                    query.Populate(shards, schedule.TickId);
+                    query.Populate(shards, schedule.TickId, schedule.TaggedTypes);
                 }
 
                 // Set tick state on the system
@@ -169,7 +171,7 @@ public class SystemRunner : IAsyncDisposable
                 }
 
                 // Flush ECB commands
-                await FlushEcbAsync(nats, cancellationToken);
+                await CommandPublisher.PublishAsync(nats, _system.Commands, cancellationToken);
 
                 // Acknowledge tick completion
                 var ack = new TickAck { TickId = schedule.TickId, InstanceId = _instanceId };
@@ -196,50 +198,5 @@ public class SystemRunner : IAsyncDisposable
             await dataSub.UnsubscribeAsync();
             Console.WriteLine($"[{systemName}] Shut down.");
         }
-    }
-
-    private async Task FlushEcbAsync(NatsConnection nats, CancellationToken ct)
-    {
-        var ecb = _system.Commands;
-        if (!ecb.HasPendingCommands) return;
-
-        // Spawns
-        foreach (var spawn in ecb.Spawns)
-        {
-            await nats.PublishAsync(
-                "engine.entity.spawn.request",
-                MessagePackSerializer.Serialize(spawn),
-                cancellationToken: ct);
-        }
-
-        // Destroys
-        if (ecb.Destroys.Count > 0)
-        {
-            var destroyReq = new EntityDestroyRequest { EntityIds = ecb.Destroys.ToArray() };
-            await nats.PublishAsync(
-                "engine.entity.destroy.request",
-                MessagePackSerializer.Serialize(destroyReq),
-                cancellationToken: ct);
-        }
-
-        // Component adds
-        foreach (var add in ecb.Adds)
-        {
-            await nats.PublishAsync(
-                "engine.entity.component.add",
-                MessagePackSerializer.Serialize(add),
-                cancellationToken: ct);
-        }
-
-        // Component removes
-        foreach (var remove in ecb.Removes)
-        {
-            await nats.PublishAsync(
-                "engine.entity.component.remove",
-                MessagePackSerializer.Serialize(remove),
-                cancellationToken: ct);
-        }
-
-        ecb.Clear();
     }
 }

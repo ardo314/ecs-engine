@@ -1,0 +1,11 @@
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+
+    # Keep the "/base" -> "/base/" redirect on the requested host, not the container's.
+    absolute_redirect off;
+
+    location / {
+        try_files $uri $uri/ __BASE_PATH__index.html;
+    }
+}

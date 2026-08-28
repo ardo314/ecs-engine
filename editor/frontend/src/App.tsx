@@ -3,9 +3,9 @@ import { useEngineSocket } from "./hooks/useEngineSocket";
 import { useEditorApi } from "./hooks/useEditorApi";
 import { SystemsPanel } from "./components/SystemsPanel";
 import { EntityBrowser } from "./components/EntityBrowser";
+import { BACKEND_URL } from "./config";
 
-const WS_URL =
-  import.meta.env.VITE_WS_URL ?? "ws://localhost:5000/ws";
+const WS_URL = BACKEND_URL.replace(/^http/, "ws") + "/ws";
 
 export function App() {
   const { snapshot, connected } = useEngineSocket(WS_URL);

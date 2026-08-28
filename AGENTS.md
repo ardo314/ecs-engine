@@ -16,8 +16,9 @@ Key concepts:
 - **Coordinator** (`engine/`) — single authority for world state.
 - **Systems** — stateless processes, each running exactly one system function.
 - **NATS** — message transport between coordinator, systems, and editor.
-- **Client** (`engine/Client/`) — SDK for authoring systems that
-  connect to the coordinator via NATS.
+- **Client** (`clients/csharp/`) — C# SDK for authoring systems that
+  connect to the coordinator via NATS. Other language SDKs live under
+  `clients/`.
 
 ---
 
@@ -25,14 +26,20 @@ Key concepts:
 
 ```
 ecs-engine/
-├── engine/                     # C# solution — Coordinator + Client SDK
+├── engine/                     # C# solution — Coordinator
 │   ├── Engine.sln
-│   ├── Engine/
-│   │   ├── Engine.csproj
-│   │   └── Program.cs
-│   └── Client/                 # System-authoring SDK (class library)
-│       ├── Client.csproj
-│       └── SystemRunner.cs
+│   └── Engine/                 # Coordinator (self-contained, includes core types)
+│       ├── Engine.csproj
+│       ├── Program.cs
+│       └── Core/               # ECS primitives (Entity, Messages, Serialization…)
+├── clients/                    # Language-specific SDKs
+│   └── csharp/                 # C# client SDK
+│       ├── CSharp.sln
+│       ├── Client/             # SDK library (self-contained)
+│       │   ├── Client.csproj
+│       │   ├── SystemRunner.cs
+│       │   └── Core/           # Own copy of ECS primitives
+│       └── Client.Tests/
 ├── editor/
 │   ├── frontend/               # React + Vite web app
 │   └── backend/                # ASP.NET Core Minimal API
@@ -88,7 +95,35 @@ ecs-engine/
 
 - Components must be structs or records implementing `IComponent`.
 - Entity IDs are `ulong`. Do not use `int` for entity identifiers.
+- Entity references are components suffixed `Ref`, holding a single `Entity`
+  field named for the target's role — `ParentRef(Entity Parent)`,
+  `CellRef(Entity Cell)`. Never a raw `ulong` or a string.
+- Foreign keys into external systems are suffixed `Id` and hold strings —
+  `NovaControllerId(string Cell, string Controller)`. Never mix `Ref` and `Id`
+  data in one component.
+- Role-qualify when an entity holds two references of the same kind
+  (`SourceControllerRef`) or when the target type is generic (`OwnerRef`).
+  Do not name a component `EntityRef` — `CommandTarget` is the command-buffer
+  target type, which is a different thing.
+- Engine-generic relations live in `Engine.Core`; domain relations live in that
+  domain's shared `*.Components` assembly. Component identity is the full type
+  name, so the same relation declared in two namespaces never matches.
+- To dereference, declare a second query matching the target entities and index
+  it. All of a system's queries are populated from the same shard set in the same
+  tick, so this costs bandwidth, not a round trip. Systems cannot look up an
+  arbitrary entity by id.
 - Systems must declare their queries explicitly — no implicit world access.
+- Declare queries in the system **constructor**, not in a lifecycle hook, so query
+  fields are `readonly` and non-null. `NewQuery` throws once the system has been
+  added to a world.
+- System lifecycle is constructor → `OnAdd` → `OnUpdateAsync` → `OnRemove`.
+  `OnAdd`/`OnRemove` track world membership and may fire more than once on the
+  same instance, so they must be idempotent.
+- Inject collaborators (HTTP clients, etc.) through the system constructor. A
+  system must not construct or dispose a resource it was not given.
+- Seed, fixture and demo entities are not system logic — create them outside
+  systems with `world.Commands` and `await world.FlushAsync()`. A system's own
+  `Commands` buffer is only for structural changes that are part of its logic.
 - Each system process runs **exactly one system function** — never multiplex
   multiple systems in a single process.
 - Horizontal scaling is done by launching more instances of the same system

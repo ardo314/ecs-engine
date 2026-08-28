@@ -42,8 +42,11 @@ public class SystemRegistry
     /// <summary>
     /// Computes execution stages. Systems within the same stage can run in parallel.
     /// Systems that conflict (one writes what the other reads/writes) go in separate stages.
+    /// <paramref name="taggedResolution"/> maps tag type names to the component type names
+    /// carrying them, so tag-joined reads participate in conflict detection.
     /// </summary>
-    public List<List<SystemDescriptor>> ComputeStages()
+    public List<List<SystemDescriptor>> ComputeStages(
+        IReadOnlyDictionary<string, string[]>? taggedResolution = null)
     {
         var systems = GetUniqueSystems();
         var stages = new List<List<SystemDescriptor>>();
@@ -61,6 +64,8 @@ public class SystemRegistry
                 if (placed.Contains(sys.Name))
                     continue;
 
+                var sysReads = ExpandReads(sys, taggedResolution);
+
                 // Check conflicts with already-placed systems in this stage
                 var conflicts = false;
 
@@ -77,7 +82,7 @@ public class SystemRegistry
                 // Conflict: this system reads something the stage writes
                 if (!conflicts)
                 {
-                    foreach (var r in sys.GetAllReads())
+                    foreach (var r in sysReads)
                     {
                         if (stageWrites.Contains(r))
                         {
@@ -92,7 +97,7 @@ public class SystemRegistry
                     stage.Add(sys);
                     placed.Add(sys.Name);
                     foreach (var w in sys.GetAllWrites()) stageWrites.Add(w);
-                    foreach (var r in sys.GetAllReads()) stageReads.Add(r);
+                    foreach (var r in sysReads) stageReads.Add(r);
                 }
             }
 
@@ -101,5 +106,20 @@ public class SystemRegistry
         }
 
         return stages;
+    }
+
+    private static HashSet<string> ExpandReads(
+        SystemDescriptor sys,
+        IReadOnlyDictionary<string, string[]>? taggedResolution)
+    {
+        var reads = new HashSet<string>(sys.GetAllReads());
+        if (taggedResolution is null) return reads;
+
+        foreach (var tag in sys.GetAllTags())
+        {
+            if (taggedResolution.TryGetValue(tag, out var types))
+                reads.UnionWith(types);
+        }
+        return reads;
     }
 }

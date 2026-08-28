@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Engine.Core;
 using Engine.Core.Messages;
 using MessagePack;
 using NATS.Client.Core;
@@ -50,7 +51,8 @@ public class TickLoop
 
             await ProcessPendingStructuralChanges(tickId, cancellationToken);
 
-            var stages = _registry.ComputeStages();
+            var stages = _registry.ComputeStages(_world.ResolveTaggedTypes(
+                _registry.GetUniqueSystems().SelectMany(s => s.GetAllTags())));
 
             for (var stageIdx = 0; stageIdx < stages.Count; stageIdx++)
             {
@@ -108,20 +110,31 @@ public class TickLoop
         // Component adds
         while (_handlers.PendingAdds.TryDequeue(out var addReq))
         {
-            if (_world.IsAlive(addReq.EntityId))
+            if (ResolveTarget(addReq.Target) is { } addTarget)
             {
-                _world.SetComponent(addReq.EntityId, addReq.ComponentType, addReq.Data);
+                _world.SetComponent(addTarget, addReq.ComponentType, addReq.Data);
             }
         }
 
         // Component removes
         while (_handlers.PendingRemoves.TryDequeue(out var removeReq))
         {
-            if (_world.IsAlive(removeReq.EntityId))
+            if (ResolveTarget(removeReq.Target) is { } removeTarget)
             {
-                _world.RemoveComponent(removeReq.EntityId, removeReq.ComponentType);
+                _world.RemoveComponent(removeTarget, removeReq.ComponentType);
             }
         }
+    }
+
+    /// <summary>
+    /// Resolves a command target to an entity id. Component type targets are created on first use.
+    /// </summary>
+    private ulong? ResolveTarget(CommandTarget target)
+    {
+        if (target.ComponentType is { Length: > 0 } typeName)
+            return _world.GetOrCreateTypeEntity(typeName);
+
+        return _world.IsAlive(target.EntityId) ? target.EntityId : null;
     }
 
     private async Task ExecuteStage(List<SystemDescriptor> stage, int stageIdx, ulong tickId, CancellationToken cancellationToken)
@@ -148,10 +161,11 @@ public class TickLoop
             var queries = sys.Queries;
             List<ulong> matchingEntities;
             HashSet<string> allTypes;
+            var taggedTypes = _world.ResolveTaggedTypes(sys.GetAllTags());
 
             if (queries.Length > 0)
             {
-                matchingEntities = _world.GetEntitiesMatchingQueries(queries);
+                matchingEntities = _world.GetEntitiesMatchingQueries(queries, taggedTypes);
                 allTypes = new HashSet<string>();
                 foreach (var q in queries)
                 {
@@ -159,6 +173,10 @@ public class TickLoop
                     foreach (var t in q.OptionalTypes) allTypes.Add(t);
                     // Include excluded types so the client can filter
                     foreach (var t in q.ExcludedTypes) allTypes.Add(t);
+                    foreach (var tag in q.TaggedTypes)
+                    {
+                        foreach (var t in taggedTypes[tag]) allTypes.Add(t);
+                    }
                 }
             }
             else
@@ -177,7 +195,8 @@ public class TickLoop
             var schedule = new SystemSchedule
             {
                 TickId = tickId,
-                ShardCount = allTypes.Count
+                ShardCount = allTypes.Count,
+                TaggedTypes = taggedTypes
             };
             await _nats.PublishAsync(
                 $"engine.system.schedule.{sys.Name}",
@@ -315,7 +334,7 @@ public class TickLoop
 
             if (watch.IncludeEntities)
             {
-                var entResponse = _handlers.BuildEntitiesResponse(watch.ComponentFilter);
+                var entResponse = _handlers.BuildEntitiesResponse(watch.ComponentFilter, watch.AnyTypes);
                 data = data with { Entities = entResponse.Entities };
             }
 
