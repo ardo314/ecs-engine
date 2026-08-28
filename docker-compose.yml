@@ -7,6 +7,7 @@ services:
       - "8222:8222"
 
   engine:
+    image: ghcr.io/ardo314/ecs-engine/engine:${IMAGE_TAG:-latest}
     build:
       context: ./engine
     depends_on:
@@ -19,6 +20,7 @@ services:
           path: ./engine/Engine
 
   movement-system:
+    image: ghcr.io/ardo314/ecs-engine/movement-system:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: examples/MovementSystem/Dockerfile
@@ -33,6 +35,7 @@ services:
           path: ./examples/MovementSystem
 
   editor-backend:
+    image: ghcr.io/ardo314/ecs-engine/editor-backend:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: editor/backend/Dockerfile
@@ -51,15 +54,16 @@ services:
           path: ./clients/csharp/Client
 
   editor-frontend:
+    image: ghcr.io/ardo314/ecs-engine/editor-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./editor/frontend
-      args:
-        BASE_PATH: ${EDITOR_FRONTEND_BASE_PATH:-/}
-        EDITOR_BACKEND_URL: ${EDITOR_BACKEND_URL:-http://localhost:5000}
     ports:
       - "3000:80"
     depends_on:
       - editor-backend
+    environment:
+      BASE_PATH: ${EDITOR_FRONTEND_BASE_PATH:-/}
+      EDITOR_BACKEND_URL: ${EDITOR_BACKEND_URL:-http://localhost:5000}
     develop:
       watch:
         - action: rebuild

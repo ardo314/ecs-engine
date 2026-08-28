@@ -3,8 +3,8 @@ import { useEngineSocket } from "./hooks/useEngineSocket";
 import { useEditorApi } from "./hooks/useEditorApi";
 import { SystemsPanel } from "./components/SystemsPanel";
 import { EntityBrowser } from "./components/EntityBrowser";
+import { BACKEND_URL } from "./config";
 
-const BACKEND_URL = (import.meta.env.VITE_EDITOR_BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
 const WS_URL = BACKEND_URL.replace(/^http/, "ws") + "/ws";
 
 export function App() {

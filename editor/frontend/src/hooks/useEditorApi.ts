@@ -1,6 +1,5 @@
 import { useCallback } from "react";
-
-const BACKEND_URL = (import.meta.env.VITE_EDITOR_BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
+import { BACKEND_URL } from "../config";
 
 export function useEditorApi() {
   const createEntity = useCallback(async () => {
