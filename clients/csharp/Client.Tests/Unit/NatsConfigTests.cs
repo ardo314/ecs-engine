@@ -59,4 +59,12 @@ public class NatsConfigTests : IDisposable
     {
         Assert.Equal(NatsConfig.DefaultUrl, NatsConfig.ResolveUrl());
     }
+
+    [Theory]
+    [InlineData("nats://user:token@broker:4222", "nats://***@broker:4222")]
+    [InlineData("nats://broker:4222", "nats://broker:4222")]
+    public void Redact_MasksCredentialsEmbeddedInTheUrl(string url, string expected)
+    {
+        Assert.Equal(expected, NatsConfig.Redact(url));
+    }
 }

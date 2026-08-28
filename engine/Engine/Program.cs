@@ -7,7 +7,8 @@ using NATS.Client.Core;
 
 Serialization.Initialize();
 
-// NATS_BROKER is injected by hosts that supply their own broker, such as Wandelbots NOVA.
+// NATS_BROKER is injected by hosts that supply their own broker, such as Wandelbots NOVA,
+// and may carry credentials as nats://user:token@host.
 var natsUrl = Environment.GetEnvironmentVariable("NATS_URL");
 if (string.IsNullOrWhiteSpace(natsUrl))
     natsUrl = Environment.GetEnvironmentVariable("NATS_BROKER");
@@ -25,7 +26,7 @@ if (health is not null)
 await using var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
 await nats.ConnectAsync();
 
-Console.WriteLine($"Connected to NATS at {natsUrl}");
+Console.WriteLine($"Connected to NATS at {Redact(natsUrl)}");
 
 var world = new WorldState();
 var registry = new SystemRegistry();
@@ -47,3 +48,8 @@ await handlers.Ready;
 // Run tick loop
 var tickLoop = new TickLoop(nats, world, registry, watchManager, handlers, pendingSpawns, tickRate);
 await tickLoop.RunAsync(cts.Token);
+
+static string Redact(string url) =>
+    Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.UserInfo.Length > 0
+        ? url.Replace($"{uri.UserInfo}@", "***@", StringComparison.Ordinal)
+        : url;

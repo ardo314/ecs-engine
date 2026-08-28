@@ -9,7 +9,9 @@ await nats.ConnectAsync();
 await using var ecs = new ECS(nats);
 var world = ecs.GetWorld();
 
-var novaBaseUrl = Environment.GetEnvironmentVariable("NOVA_BASE_URL") ?? "http://localhost:80";
+// NOVA injects NOVA_API and CELL_NAME into every app container; the NOVA_* overrides
+// are for running this system outside an instance.
+var novaBaseUrl = FirstSet("NOVA_BASE_URL", "NOVA_API") ?? "http://localhost:80";
 var novaToken = Environment.GetEnvironmentVariable("NOVA_ACCESS_TOKEN") ?? "";
 
 using var novaClient = new NovaIoClient(novaBaseUrl);
@@ -17,7 +19,7 @@ if (!string.IsNullOrEmpty(novaToken))
     novaClient.SetAuthToken(novaToken);
 
 // Demo data: the IO entities the system drives.
-var cell = Environment.GetEnvironmentVariable("NOVA_CELL") ?? "cell";
+var cell = FirstSet("NOVA_CELL", "CELL_NAME") ?? "cell";
 var controller = Environment.GetEnvironmentVariable("NOVA_CONTROLLER") ?? "ur10e";
 
 world.Commands.CreateEntity(
@@ -41,3 +43,8 @@ Console.WriteLine("[SetControllerIO] Seeded demo IO entities.");
 world.AddSystem(new SetControllerIOSystem(novaClient));
 
 await ecs.WaitForShutdownAsync();
+
+static string? FirstSet(params string[] names) => names
+    .Select(Environment.GetEnvironmentVariable)
+    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?
+    .Trim();
