@@ -17,8 +17,6 @@ services:
       watch:
         - action: rebuild
           path: ./engine/Engine
-        - action: rebuild
-          path: ./engine/Core
 
   movement-system:
     build:
@@ -49,8 +47,6 @@ services:
       watch:
         - action: rebuild
           path: ./editor/backend/EditorBackend
-        - action: rebuild
-          path: ./engine/Core
         - action: rebuild
           path: ./engine/Client
 

@@ -16,8 +16,9 @@ Key concepts:
 - **Coordinator** (`engine/`) — single authority for world state.
 - **Systems** — stateless processes, each running exactly one system function.
 - **NATS** — message transport between coordinator, systems, and editor.
-- **Client** (`engine/Client/`) — SDK for authoring systems that
-  connect to the coordinator via NATS.
+- **Client** (`engine/Client/`) — C# SDK for authoring systems that
+  connect to the coordinator via NATS. Other language SDKs live outside
+  `engine/`.
 
 ---
 
@@ -27,12 +28,14 @@ Key concepts:
 ecs-engine/
 ├── engine/                     # C# solution — Coordinator + Client SDK
 │   ├── Engine.sln
-│   ├── Engine/
+│   ├── Engine/                 # Coordinator (self-contained, includes core types)
 │   │   ├── Engine.csproj
-│   │   └── Program.cs
-│   └── Client/                 # System-authoring SDK (class library)
+│   │   ├── Program.cs
+│   │   └── Core/               # ECS primitives (Entity, Messages, Serialization…)
+│   └── Client/                 # C# system-authoring SDK (self-contained)
 │       ├── Client.csproj
-│       └── SystemRunner.cs
+│       ├── SystemRunner.cs
+│       └── Core/               # Own copy of ECS primitives
 ├── editor/
 │   ├── frontend/               # React + Vite web app
 │   └── backend/                # ASP.NET Core Minimal API
