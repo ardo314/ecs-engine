@@ -4,4 +4,8 @@ const configured =
   window.__EDITOR_CONFIG__?.backendUrl ||
   "http://localhost:5000";
 
-export const BACKEND_URL = configured.replace(/\/+$/, "");
+// Resolved against the page origin so a path-only value works behind a reverse proxy.
+export const BACKEND_URL = new URL(configured, window.location.origin).href.replace(
+  /\/+$/,
+  "",
+);

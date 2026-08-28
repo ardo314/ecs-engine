@@ -20,6 +20,7 @@ public sealed class ECS : IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly Dictionary<string, World> _worlds = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource _shutdown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly HealthEndpoint? _health;
     private ConsoleCancelEventHandler? _ctrlCHandler;
 
     public const string DefaultWorldName = "default";
@@ -28,6 +29,7 @@ public sealed class ECS : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(nats);
         Nats = nats;
+        _health = HealthEndpoint.StartFromEnvironment();
     }
 
     /// <summary>
@@ -85,6 +87,7 @@ public sealed class ECS : IAsyncDisposable
     {
         UnhookCtrlC();
         _shutdown.TrySetResult();
+        _health?.Dispose();
 
         World[] worlds;
         lock (_gate)

@@ -44,5 +44,11 @@ engine/              — C# solution: Coordinator + Client SDK
 editor/frontend/     — React + TypeScript + Vite web app
 editor/backend/      — ASP.NET Core Minimal API (WebSocket bridge to NATS)
 examples/            — Example components and systems
+deployments/nova/    — Installer for Wandelbots NOVA instances
 .devcontainer/       — Dev container configuration
 ```
+
+## Deployment
+
+Locally the stack runs with `docker compose up`. To install it onto a Wandelbots
+NOVA instance, see [deployments/nova/README.md](deployments/nova/README.md).

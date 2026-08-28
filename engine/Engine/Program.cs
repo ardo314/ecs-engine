@@ -12,6 +12,10 @@ var tickRate = int.TryParse(Environment.GetEnvironmentVariable("TICK_RATE"), out
 
 Console.WriteLine("Engine coordinator starting...");
 
+using var health = HealthEndpoint.StartFromEnvironment();
+if (health is not null)
+    Console.WriteLine($"Health endpoint listening on port {health.Port}");
+
 await using var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
 await nats.ConnectAsync();
 

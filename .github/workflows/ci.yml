@@ -87,8 +87,21 @@ jobs:
         run: npm run build
         working-directory: editor/frontend
 
+  test-nova-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Test
+        run: dotnet test deployments/nova/NovaInstaller.sln --verbosity normal
+
   publish-images:
-    needs: [test-engine, build-editor-backend, build-editor-frontend]
+    needs: [test-engine, build-editor-backend, build-editor-frontend, test-nova-installer]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
@@ -115,6 +128,12 @@ jobs:
           - name: editor-frontend
             context: ./editor/frontend
             dockerfile: ./editor/frontend/Dockerfile
+          - name: nova-installer
+            context: ./deployments/nova
+            dockerfile: ./deployments/nova/Dockerfile
+          - name: nova-nats
+            context: ./deployments/nova/nats
+            dockerfile: ./deployments/nova/nats/Dockerfile
 
     steps:
       - uses: actions/checkout@v4
