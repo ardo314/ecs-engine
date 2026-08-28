@@ -25,6 +25,12 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+var rawBasePath = Environment.GetEnvironmentVariable("BASE_PATH")?.Trim('/') ?? "";
+if (rawBasePath.Length > 0)
+{
+    app.UsePathBase("/" + rawBasePath);
+}
+
 app.UseCors();
 app.UseWebSockets();
 

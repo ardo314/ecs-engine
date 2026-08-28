@@ -3,8 +3,16 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 COPY . .
-RUN npm run build
+ARG BASE_PATH=/
+ARG EDITOR_BACKEND_URL=http://localhost:5000
+ENV VITE_EDITOR_BACKEND_URL=${EDITOR_BACKEND_URL}
+RUN BASE_PATH=$(printf '/%s/' "$BASE_PATH" | sed 's|//*|/|g') && \
+    export BASE_PATH && npm run build
 
 FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+ENV BASE_PATH=/
+COPY --from=build /app/dist /app/dist
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY 40-base-path.envsh /docker-entrypoint.d/40-base-path.envsh
+RUN chmod +x /docker-entrypoint.d/40-base-path.envsh
 EXPOSE 80

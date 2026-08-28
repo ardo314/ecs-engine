@@ -1,0 +1,7 @@
+#!/bin/sh
+# Normalize BASE_PATH and copy built assets into the matching subdirectory.
+BASE_PATH=$(printf '/%s/' "$BASE_PATH" | sed 's|//*|/|g')
+export BASE_PATH
+
+mkdir -p "/usr/share/nginx/html${BASE_PATH}"
+cp -a /app/dist/. "/usr/share/nginx/html${BASE_PATH}"

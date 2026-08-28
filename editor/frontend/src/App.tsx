@@ -4,8 +4,8 @@ import { useEditorApi } from "./hooks/useEditorApi";
 import { SystemsPanel } from "./components/SystemsPanel";
 import { EntityBrowser } from "./components/EntityBrowser";
 
-const WS_URL =
-  import.meta.env.VITE_WS_URL ?? "ws://localhost:5000/ws";
+const BACKEND_URL = (import.meta.env.VITE_EDITOR_BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
+const WS_URL = BACKEND_URL.replace(/^http/, "ws") + "/ws";
 
 export function App() {
   const { snapshot, connected } = useEngineSocket(WS_URL);

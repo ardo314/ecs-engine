@@ -44,6 +44,7 @@ services:
       - "5000:5000"
     environment:
       NATS_URL: nats://nats:4222
+      BASE_PATH: ${EDITOR_BACKEND_BASE_PATH:-/}
     develop:
       watch:
         - action: rebuild
@@ -56,8 +57,13 @@ services:
   editor-frontend:
     build:
       context: ./editor/frontend
+      args:
+        BASE_PATH: ${EDITOR_FRONTEND_BASE_PATH:-/}
+        EDITOR_BACKEND_URL: ${EDITOR_BACKEND_URL:-http://localhost:5000}
     ports:
       - "3000:80"
+    environment:
+      BASE_PATH: ${EDITOR_FRONTEND_BASE_PATH:-/}
     depends_on:
       - editor-backend
     develop:
