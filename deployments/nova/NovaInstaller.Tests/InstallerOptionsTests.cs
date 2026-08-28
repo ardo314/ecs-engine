@@ -42,6 +42,46 @@ public class InstallerOptionsTests
     }
 
     [Fact]
+    public void FromEnvironment_FallsBackToTheInjectedNovaApiAndCellName()
+    {
+        var options = Options(new Dictionary<string, string>
+        {
+            ["NOVA_API"] = "http://api-gateway.wandelbots.svc.cluster.local/api/v1",
+            ["CELL_NAME"] = "cell-a"
+        });
+
+        Assert.Equal("http://api-gateway.wandelbots.svc.cluster.local", options.NovaBaseUrl);
+        Assert.Equal("cell-a", options.Cell);
+    }
+
+    [Fact]
+    public void FromEnvironment_PrefersExplicitBaseUrlOverInjectedNovaApi()
+    {
+        var options = Options(new Dictionary<string, string>
+        {
+            ["NOVA_BASE_URL"] = "https://nova.example.com",
+            ["NOVA_API"] = "http://api-gateway/api/v1"
+        });
+
+        Assert.Equal("https://nova.example.com", options.NovaBaseUrl);
+    }
+
+    [Theory]
+    [InlineData("api-gateway:8080", "http://api-gateway:8080")]
+    [InlineData("https://nova.example.com/api", "https://nova.example.com")]
+    [InlineData("https://nova.example.com/api/v2/", "https://nova.example.com")]
+    public void NormalizeBaseUrl_ReducesAnAddressToTheInstanceRoot(string raw, string expected)
+    {
+        Assert.Equal(expected, InstallerOptions.NormalizeBaseUrl(raw));
+    }
+
+    [Fact]
+    public void NormalizeBaseUrl_RejectsNonHttpAddresses()
+    {
+        Assert.Throws<InstallerConfigurationException>(() => InstallerOptions.NormalizeBaseUrl("nats://broker:4222"));
+    }
+
+    [Fact]
     public void FromEnvironment_RejectsNonPositiveTickRate()
     {
         Assert.Throws<InstallerConfigurationException>(() =>

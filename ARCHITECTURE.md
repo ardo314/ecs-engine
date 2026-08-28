@@ -471,8 +471,11 @@ becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
 | `ecs-<system>` | One app per system image |
 
 No broker is installed: NOVA runs its own NATS and injects the address as
-`NATS_BROKER`, which both the coordinator and `NatsConfig` read when `NATS_URL`
-is unset. The coordinator is installed before anything that talks to it.
+`NATS_BROKER` — a `nats://user:token@host` URL, credentials included — which both
+the coordinator and `NatsConfig` read when `NATS_URL` is unset and mask before
+logging. NOVA also injects `NOVA_API` (the REST endpoint) and `CELL_NAME`, which
+the installer and the NOVA example systems fall back to so they work unconfigured
+inside an instance. The coordinator is installed before anything that talks to it.
 Re-running the installer deletes and recreates existing apps, so it doubles as an
 upgrade.
 

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace NovaInstaller;
 
@@ -41,9 +42,9 @@ public sealed class InstallerOptions
 
         return new InstallerOptions
         {
-            NovaBaseUrl = (Value(read, "NOVA_BASE_URL") ?? "http://localhost:80").TrimEnd('/'),
+            NovaBaseUrl = NormalizeBaseUrl(Value(read, "NOVA_BASE_URL") ?? Value(read, "NOVA_API") ?? "http://localhost:80"),
             AccessToken = Value(read, "NOVA_ACCESS_TOKEN") ?? "",
-            Cell = Value(read, "NOVA_CELL") ?? "cell",
+            Cell = Value(read, "NOVA_CELL") ?? Value(read, "CELL_NAME") ?? "cell",
             AppPrefix = prefix,
             EngineImage = Value(read, "ECS_ENGINE_IMAGE") ?? $"{registry}/engine:{tag}",
             EditorBackendImage = Value(read, "ECS_EDITOR_BACKEND_IMAGE") ?? $"{registry}/editor-backend:{tag}",
@@ -89,6 +90,26 @@ public sealed class InstallerOptions
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Reduces a NOVA address to the instance root. NOVA injects <c>NOVA_API</c> pointing at
+    /// the API root (<c>…/api/v1</c>) and sometimes without a scheme, while
+    /// <see cref="NovaAppClient"/> appends its own versioned path.
+    /// </summary>
+    internal static string NormalizeBaseUrl(string raw)
+    {
+        var value = raw.Trim();
+        if (!value.Contains("://", StringComparison.Ordinal))
+            value = "http://" + value;
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            throw new InstallerConfigurationException($"'{raw}' is not a valid NOVA base URL.");
+
+        var path = Regex.Replace(uri.AbsolutePath.TrimEnd('/'), @"/api(/v\d+)?$", "", RegexOptions.IgnoreCase);
+
+        return new UriBuilder(uri) { Path = path, Query = "", Fragment = "" }.Uri.ToString().TrimEnd('/');
     }
 
     /// <summary>Takes the repository segment of an image reference, minus tag or digest.</summary>

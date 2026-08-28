@@ -24,6 +24,15 @@ public static class NatsConfig
         NullIfEmpty(token) ?? NullIfEmpty(Environment.GetEnvironmentVariable("NATS_TOKEN"));
 
     /// <summary>
+    /// Masks the credentials in a <c>nats://user:token@host</c> URL, as NOVA's
+    /// NATS_BROKER carries them, so the address can be logged.
+    /// </summary>
+    public static string Redact(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.UserInfo.Length > 0
+            ? url.Replace($"{uri.UserInfo}@", "***@", StringComparison.Ordinal)
+            : url;
+
+    /// <summary>
     /// Creates connection options for the given URL and credentials.
     /// </summary>
     public static NatsOpts CreateOpts(string? url = null, string? user = null, string? token = null)

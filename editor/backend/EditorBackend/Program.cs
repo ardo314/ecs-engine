@@ -13,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 var natsOpts = NatsConfig.CreateOpts();
 var nats = new NatsConnection(natsOpts);
 await nats.ConnectAsync();
-Console.WriteLine($"[Editor] Connected to NATS at {natsOpts.Url}");
+Console.WriteLine($"[Editor] Connected to NATS at {NatsConfig.Redact(natsOpts.Url)}");
 
 builder.Services.AddSingleton(nats);
 builder.Services.AddSingleton<WsBroadcaster>();
