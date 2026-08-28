@@ -2,8 +2,8 @@ namespace NovaInstaller;
 
 /// <summary>
 /// Turns installer options into the ordered list of NOVA apps that make up the
-/// ECS stack. Order matters: NATS first, then the coordinator, then everything
-/// that talks to it.
+/// ECS stack. Order matters: the coordinator goes in before anything that talks
+/// to it. NATS is provided by the NOVA instance, so no broker is installed.
 /// </summary>
 public static class StackPlanner
 {
@@ -11,7 +11,7 @@ public static class StackPlanner
 
     public static IReadOnlyList<AppManifest> Plan(InstallerOptions options)
     {
-        var apps = new List<AppManifest> { Nats(options), Engine(options) };
+        var apps = new List<AppManifest> { Engine(options) };
 
         if (options.InstallEditor)
         {
@@ -23,16 +23,6 @@ public static class StackPlanner
         return apps;
     }
 
-    private static AppManifest Nats(InstallerOptions options) => new()
-    {
-        Name = $"{options.AppPrefix}-nats",
-        AppIcon = IconPath,
-        ContainerImage = Image(options, options.NatsImage),
-        Port = 8222,
-        HealthPath = "/healthz",
-        Storage = new AppStorage { MountPath = "/data", Capacity = "300Mi" }
-    };
-
     private static AppManifest Engine(InstallerOptions options) => new()
     {
         Name = $"{options.AppPrefix}-engine",
@@ -42,7 +32,7 @@ public static class StackPlanner
         HealthPath = "/health",
         Environment =
         [
-            new EnvVar { Name = "NATS_URL", Value = options.NatsUrl },
+            .. NatsUrl(options),
             new EnvVar { Name = "TICK_RATE", Value = options.TickRate.ToString() },
             new EnvVar { Name = "HEALTH_PORT", Value = "8080" }
         ]
@@ -60,7 +50,7 @@ public static class StackPlanner
             HealthPath = "/health",
             Environment =
             [
-                new EnvVar { Name = "NATS_URL", Value = options.NatsUrl },
+                .. NatsUrl(options),
                 new EnvVar { Name = "ASPNETCORE_URLS", Value = "http://+:5000" },
                 new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) }
             ]
@@ -95,10 +85,14 @@ public static class StackPlanner
         HealthPath = "/health",
         Environment =
         [
-            new EnvVar { Name = "NATS_URL", Value = options.NatsUrl },
+            .. NatsUrl(options),
             new EnvVar { Name = "HEALTH_PORT", Value = "8080" }
         ]
     };
+
+    /// <summary>Omitted unless overridden, so containers fall back to NOVA's NATS_BROKER.</summary>
+    private static EnvVar[] NatsUrl(InstallerOptions options) =>
+        options.NatsUrl is null ? [] : [new EnvVar { Name = "NATS_URL", Value = options.NatsUrl }];
 
     /// <summary>The URL prefix NOVA serves an app under.</summary>
     private static string PublicPath(InstallerOptions options, string appName) => $"/{options.Cell}/{appName}";

@@ -16,7 +16,13 @@ public class InstallerOptionsTests
 
         Assert.Equal("registry.example.com/ecs/engine:1.2.3", options.EngineImage);
         Assert.Equal("registry.example.com/ecs/editor-backend:1.2.3", options.EditorBackendImage);
-        Assert.Equal("registry.example.com/ecs/nova-nats:1.2.3", options.NatsImage);
+        Assert.Equal("registry.example.com/ecs/editor-frontend:1.2.3", options.EditorFrontendImage);
+    }
+
+    [Fact]
+    public void FromEnvironment_LeavesNatsUrlUnsetByDefault()
+    {
+        Assert.Null(Options([]).NatsUrl);
     }
 
     [Fact]

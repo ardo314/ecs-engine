@@ -14,13 +14,18 @@ public sealed class InstallerOptions
     public required string AccessToken { get; init; }
     public required string Cell { get; init; }
     public required string AppPrefix { get; init; }
-    public required string NatsImage { get; init; }
     public required string EngineImage { get; init; }
     public required string EditorBackendImage { get; init; }
     public required string EditorFrontendImage { get; init; }
     public required IReadOnlyList<SystemImage> SystemImages { get; init; }
     public required bool InstallEditor { get; init; }
-    public required string NatsUrl { get; init; }
+
+    /// <summary>
+    /// Overrides the broker address. Left null the containers fall back to
+    /// NATS_BROKER, which NOVA injects.
+    /// </summary>
+    public string? NatsUrl { get; init; }
+
     public required int TickRate { get; init; }
     public string? RegistryUser { get; init; }
     public string? RegistryPassword { get; init; }
@@ -40,13 +45,12 @@ public sealed class InstallerOptions
             AccessToken = Value(read, "NOVA_ACCESS_TOKEN") ?? "",
             Cell = Value(read, "NOVA_CELL") ?? "cell",
             AppPrefix = prefix,
-            NatsImage = Value(read, "ECS_NATS_IMAGE") ?? $"{registry}/nova-nats:{tag}",
             EngineImage = Value(read, "ECS_ENGINE_IMAGE") ?? $"{registry}/engine:{tag}",
             EditorBackendImage = Value(read, "ECS_EDITOR_BACKEND_IMAGE") ?? $"{registry}/editor-backend:{tag}",
             EditorFrontendImage = Value(read, "ECS_EDITOR_FRONTEND_IMAGE") ?? $"{registry}/editor-frontend:{tag}",
             SystemImages = ParseSystemImages(Value(read, "ECS_SYSTEM_IMAGES")),
             InstallEditor = ParseBool(Value(read, "ECS_INSTALL_EDITOR"), true),
-            NatsUrl = Value(read, "ECS_NATS_URL") ?? $"nats://{prefix}-nats:4222",
+            NatsUrl = Value(read, "ECS_NATS_URL"),
             TickRate = ParseInt(read, "ECS_TICK_RATE", 20),
             RegistryUser = Value(read, "ECS_REGISTRY_USER"),
             RegistryPassword = Value(read, "ECS_REGISTRY_PASSWORD"),

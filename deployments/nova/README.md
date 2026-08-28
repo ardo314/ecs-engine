@@ -6,18 +6,20 @@ NOVA gives no direct Kubernetes access, so the installer drives the NOVA app API
 (`/api/v2/cells/{cell}/apps`) instead. Each part of the stack becomes a NOVA app,
 served at `http://<instance>/<cell>/<app-name>`.
 
+NATS is not installed — NOVA runs its own broker and injects its address into
+every app container as `NATS_BROKER`, which the coordinator and the client SDK
+fall back to when `NATS_URL` is unset.
+
 ## What gets installed
 
 | App | Image | Port | Health |
 |---|---|---|---|
-| `ecs-nats` | `nova-nats` (built from `nats/`) | 8222 | `/healthz` |
 | `ecs-engine` | `engine` | 8080 | `/health` |
 | `ecs-editor-api` | `editor-backend` | 5000 | `/health` |
 | `ecs-editor` | `editor-frontend` | 80 | `/<cell>/ecs-editor/config.js` |
 | `ecs-<system>` | one per `ECS_SYSTEM_IMAGES` entry | 8080 | `/health` |
 
-Apps are installed in that order so NATS and the coordinator are up before
-anything that talks to them.
+The coordinator is installed first, before anything that talks to it.
 
 NOVA restarts any app whose health probe fails. The coordinator and system
 containers are headless, so they serve `/health` and `/app_icon.png` from
@@ -39,10 +41,9 @@ All configuration is via environment variables.
 | `ECS_ENGINE_IMAGE` | derived | Overrides the engine image |
 | `ECS_EDITOR_BACKEND_IMAGE` | derived | Overrides the editor backend image |
 | `ECS_EDITOR_FRONTEND_IMAGE` | derived | Overrides the editor frontend image |
-| `ECS_NATS_IMAGE` | derived | Overrides the NATS image |
 | `ECS_SYSTEM_IMAGES` | *(empty)* | Comma-separated `name=image` or bare image references |
 | `ECS_INSTALL_EDITOR` | `true` | Set `false` to skip both editor apps |
-| `ECS_NATS_URL` | `nats://<prefix>-nats:4222` | Injected as `NATS_URL` into every consumer |
+| `ECS_NATS_URL` | *(unset)* | Overrides the broker; unset means NOVA's `NATS_BROKER` is used |
 | `ECS_TICK_RATE` | `20` | Coordinator tick rate |
 | `ECS_REGISTRY_USER` | *(unset)* | Pull credentials; both parts required |
 | `ECS_REGISTRY_PASSWORD` | *(unset)* | Pull credentials; both parts required |
@@ -77,24 +78,9 @@ Re-running is an upgrade: any app whose name already exists is deleted, waited
 out, and recreated from the new manifest. There is no uninstall mode — remove
 apps from the NOVA UI or via the app API.
 
-## NATS image
-
-`nats/` builds the `nova-nats` image: stock `nats:2.10` plus a config that turns
-on JetStream (`/data`, backed by the app's 300Mi volume) and the monitoring port,
-which is what NOVA health-probes.
-
 ## Building
 
 ```bash
 dotnet test deployments/nova/NovaInstaller.sln
 docker build -t nova-installer deployments/nova
-docker build -t nova-nats deployments/nova/nats
 ```
-
-## Known limitation
-
-A NOVA app publishes exactly one port, routed by HTTP path. Whether one app can
-reach another's raw TCP port (NATS on 4222) has not been confirmed on a live
-instance. If `nats://ecs-nats:4222` does not resolve there, point `ECS_NATS_URL`
-at the platform NATS broker that NOVA injects as `NATS_BROKER` — no rebuild
-needed, it is just an installer environment variable.

@@ -131,9 +131,6 @@ jobs:
           - name: nova-installer
             context: ./deployments/nova
             dockerfile: ./deployments/nova/Dockerfile
-          - name: nova-nats
-            context: ./deployments/nova/nats
-            dockerfile: ./deployments/nova/nats/Dockerfile
 
     steps:
       - uses: actions/checkout@v4

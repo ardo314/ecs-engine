@@ -465,17 +465,16 @@ becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
 
 | App | Serves |
 | --- | --- |
-| `ecs-nats` | NATS with JetStream; monitoring port health-probed at `/healthz` |
 | `ecs-engine` | Coordinator |
 | `ecs-editor-api` | Editor backend, mounted at its public path via `BASE_PATH` |
 | `ecs-editor` | Editor frontend |
 | `ecs-<system>` | One app per system image |
 
-Installation order is NATS, coordinator, then consumers. Re-running the installer
-deletes and recreates existing apps, so it doubles as an upgrade. Because a NOVA
-app publishes a single HTTP-routed port, `ECS_NATS_URL` stays configurable: if the
-in-cell NATS app is unreachable on 4222, point it at the platform broker NOVA
-injects as `NATS_BROKER`.
+No broker is installed: NOVA runs its own NATS and injects the address as
+`NATS_BROKER`, which both the coordinator and `NatsConfig` read when `NATS_URL`
+is unset. The coordinator is installed before anything that talks to it.
+Re-running the installer deletes and recreates existing apps, so it doubles as an
+upgrade.
 
 ---
 

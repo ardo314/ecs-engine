@@ -11,25 +11,35 @@ public class StackPlannerTests
     }
 
     [Fact]
-    public void Plan_WithoutSystems_InstallsNatsEngineAndEditor()
+    public void Plan_WithoutSystems_InstallsEngineAndEditor()
     {
         var apps = StackPlanner.Plan(Options());
 
         Assert.Equal(
-            ["ecs-nats", "ecs-engine", "ecs-editor-api", "ecs-editor"],
+            ["ecs-engine", "ecs-editor-api", "ecs-editor"],
             apps.Select(a => a.Name));
     }
 
     [Fact]
-    public void Plan_PlacesNatsBeforeEveryConsumer()
+    public void Plan_NeverInstallsABroker()
     {
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
         {
             ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
         }));
 
-        Assert.Equal("ecs-nats", apps[0].Name);
-        Assert.Equal("ecs-engine", apps[1].Name);
+        Assert.DoesNotContain(apps, a => a.Name.Contains("nats"));
+    }
+
+    [Fact]
+    public void Plan_PlacesTheCoordinatorBeforeEveryConsumer()
+    {
+        var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
+        {
+            ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
+        }));
+
+        Assert.Equal("ecs-engine", apps[0].Name);
     }
 
     [Fact]
@@ -40,7 +50,7 @@ public class StackPlannerTests
             ["ECS_INSTALL_EDITOR"] = "false"
         }));
 
-        Assert.Equal(["ecs-nats", "ecs-engine"], apps.Select(a => a.Name));
+        Assert.Equal(["ecs-engine"], apps.Select(a => a.Name));
     }
 
     [Fact]
@@ -52,8 +62,8 @@ public class StackPlannerTests
             ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0,nova=ghcr.io/acme/nova-systems:2.0"
         }));
 
-        Assert.Equal(["ecs-nats", "ecs-engine", "ecs-movement-system", "ecs-nova"], apps.Select(a => a.Name));
-        Assert.Equal("ghcr.io/acme/nova-systems:2.0", apps[3].ContainerImage.Image);
+        Assert.Equal(["ecs-engine", "ecs-movement-system", "ecs-nova"], apps.Select(a => a.Name));
+        Assert.Equal("ghcr.io/acme/nova-systems:2.0", apps[2].ContainerImage.Image);
     }
 
     [Fact]
@@ -65,7 +75,7 @@ public class StackPlannerTests
             ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
         }));
 
-        foreach (var app in apps.Where(a => a.Name != "ecs-nats"))
+        foreach (var app in apps)
         {
             var healthPort = app.Environment!.Single(e => e.Name == "HEALTH_PORT").Value;
             Assert.Equal(app.Port!.Value.ToString(), healthPort);
@@ -74,20 +84,14 @@ public class StackPlannerTests
     }
 
     [Fact]
-    public void Plan_PointsEveryConsumerAtTheNatsApp()
+    public void Plan_OmitsNatsUrlSoContainersFallBackToNovasBroker()
     {
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
         {
             ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
         }));
 
-        var natsUrls = apps
-            .Where(a => a.Environment is not null)
-            .SelectMany(a => a.Environment!)
-            .Where(e => e.Name == "NATS_URL")
-            .Select(e => e.Value);
-
-        Assert.All(natsUrls, url => Assert.Equal("nats://ecs-nats:4222", url));
+        Assert.DoesNotContain(apps.SelectMany(a => a.Environment!), e => e.Name == "NATS_URL");
     }
 
     [Fact]
@@ -95,12 +99,21 @@ public class StackPlannerTests
     {
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
         {
-            ["ECS_INSTALL_EDITOR"] = "false",
+            ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0",
             ["ECS_NATS_URL"] = "nats://platform-nats:4222"
         }));
 
-        var engine = apps.Single(a => a.Name == "ecs-engine");
-        Assert.Equal("nats://platform-nats:4222", engine.Environment!.Single(e => e.Name == "NATS_URL").Value);
+        // The frontend is a browser app and never talks to NATS.
+        string[] consumers = ["ecs-engine", "ecs-editor-api", "ecs-movement-system"];
+
+        foreach (var name in consumers)
+        {
+            var app = apps.Single(a => a.Name == name);
+            Assert.Equal("nats://platform-nats:4222", app.Environment!.Single(e => e.Name == "NATS_URL").Value);
+        }
+
+        var frontend = apps.Single(a => a.Name == "ecs-editor");
+        Assert.DoesNotContain(frontend.Environment!, e => e.Name == "NATS_URL");
     }
 
     [Fact]
@@ -114,16 +127,6 @@ public class StackPlannerTests
 
         var backend = apps.Single(a => a.Name == "ecs-editor-api");
         Assert.Equal("/cell/ecs-editor-api", backend.Environment!.Single(e => e.Name == "BASE_PATH").Value);
-    }
-
-    [Fact]
-    public void Plan_GivesNatsPersistentStorageAndItsMonitoringPort()
-    {
-        var nats = StackPlanner.Plan(Options()).Single(a => a.Name == "ecs-nats");
-
-        Assert.Equal(8222, nats.Port);
-        Assert.Equal("/healthz", nats.HealthPath);
-        Assert.Equal("/data", nats.Storage!.MountPath);
     }
 
     [Fact]
