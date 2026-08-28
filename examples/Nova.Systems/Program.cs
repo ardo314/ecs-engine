@@ -1,8 +1,12 @@
 using Client;
+using NATS.Client.Core;
 using Nova.Components;
 using Nova.Systems;
 
-await using var ecs = new ECS();
+await using var nats = new NatsConnection(NatsConfig.CreateOpts());
+await nats.ConnectAsync();
+
+await using var ecs = new ECS(nats);
 var world = ecs.GetWorld();
 
 var novaBaseUrl = Environment.GetEnvironmentVariable("NOVA_BASE_URL") ?? "http://localhost:80";

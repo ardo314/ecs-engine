@@ -1,8 +1,12 @@
 using Client;
 using Examples;
 using Examples.Components;
+using NATS.Client.Core;
 
-await using var ecs = new ECS();
+await using var nats = new NatsConnection(NatsConfig.CreateOpts());
+await nats.ConnectAsync();
+
+await using var ecs = new ECS(nats);
 var world = ecs.GetWorld();
 
 var entityCount = int.TryParse(

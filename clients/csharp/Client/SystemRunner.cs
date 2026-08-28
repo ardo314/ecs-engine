@@ -15,20 +15,21 @@ internal static class ClientModuleInit
 }
 
 /// <summary>
-/// Connects a <see cref="SystemBase"/> to the engine coordinator via NATS
-/// and runs its tick loop.
+/// Connects a <see cref="SystemBase"/> to the engine coordinator over the supplied
+/// NATS connection and runs its tick loop.
 /// </summary>
-public class SystemRunner : IAsyncDisposable
+public class SystemRunner
 {
     private readonly SystemBase _system;
-    private readonly string _natsUrl;
-    private NatsConnection? _nats;
+    private readonly INatsConnection _nats;
     private readonly string _instanceId = Guid.NewGuid().ToString("N");
 
-    public SystemRunner(SystemBase system, string? natsUrl = null)
+    public SystemRunner(SystemBase system, INatsConnection nats)
     {
+        ArgumentNullException.ThrowIfNull(system);
+        ArgumentNullException.ThrowIfNull(nats);
         _system = system;
-        _natsUrl = natsUrl ?? Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+        _nats = nats;
     }
 
     public string InstanceId => _instanceId;
@@ -36,29 +37,12 @@ public class SystemRunner : IAsyncDisposable
     public string SystemName => _system.SystemName;
 
     /// <summary>
-    /// Connects to the message transport.
-    /// </summary>
-    public async Task ConnectAsync(CancellationToken cancellationToken = default)
-    {
-        _nats = new NatsConnection(new NatsOpts { Url = _natsUrl });
-        await _nats.ConnectAsync();
-        Console.WriteLine($"[{SystemName}] Connected to transport.");
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_nats is not null)
-            await _nats.DisposeAsync();
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
     /// Registers with the coordinator, subscribes to component data, and runs the tick loop.
     /// Calls OnUpdateAsync each tick, then flushes query mutations and ECB commands.
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        var nats = _nats ?? throw new InvalidOperationException("Call ConnectAsync before RunAsync.");
+        var nats = _nats;
         var systemName = SystemName;
 
         // Build registration descriptor from all queries

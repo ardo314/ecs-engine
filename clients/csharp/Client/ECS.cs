@@ -1,12 +1,15 @@
+using NATS.Client.Core;
+
 namespace Client;
 
 /// <summary>
-/// Entry point for the client SDK. Owns the connection settings, hands out worlds,
+/// Entry point for the client SDK. Owns the transport connection, hands out worlds,
 /// and controls process shutdown.
 /// </summary>
 /// <example>
 /// <code>
-/// var ecs = new ECS();
+/// await using var nats = new NatsConnection(NatsConfig.CreateOpts());
+/// var ecs = new ECS(nats);
 /// var world = ecs.GetWorld();
 /// world.AddSystem(new MovementSystem(dep));
 /// await ecs.WaitForShutdownAsync();
@@ -21,15 +24,17 @@ public sealed class ECS : IAsyncDisposable
 
     public const string DefaultWorldName = "default";
 
-    public ECS(string? natsUrl = null)
+    public ECS(INatsConnection nats)
     {
-        NatsUrl = natsUrl ?? Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+        ArgumentNullException.ThrowIfNull(nats);
+        Nats = nats;
     }
 
     /// <summary>
-    /// Transport URL used by every world created from this instance.
+    /// Transport connection used by every world created from this instance.
+    /// The caller owns it — disposing the ECS does not close it.
     /// </summary>
-    public string NatsUrl { get; }
+    public INatsConnection Nats { get; }
 
     /// <summary>
     /// Returns the world with the given name, creating it on first access.
