@@ -8,7 +8,7 @@
       "version": "22"
     }
   },
-  "forwardPorts": [4222, 3000, 5000],
+  "forwardPorts": [4222, 3000, 8080],
   "postStartCommand": ".devcontainer/start-nats.sh",
   "postCreateCommand": "cd editor/frontend && npm install",
   "customizations": {

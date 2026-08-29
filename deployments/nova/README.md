@@ -21,15 +21,14 @@ coordinator and the client SDK fall back to when `NATS_URL` is unset.
 
 The coordinator is installed first, before anything that talks to it.
 
-NOVA restarts any app whose health probe fails. The coordinator and system
-containers are headless, so they serve `/health` and `/app_icon.png` from
-`HealthEndpoint`, which always listens on 8080 — the port NOVA probes. The probe
-is matched on the trailing path segment, so `/<cell>/<app>/health` is answered as
-well as `/health`.
+NOVA restarts any app whose health probe fails. Every process therefore hosts a
+`WebApplication` and adds `HealthEndpoint` to it, which serves `/health` and
+`/app_icon.png` on port 8080 — the port NOVA probes.
 
 NOVA injects `BASE_PATH` (`/<cell>/<app-name>`) into every app, so the installer
-does not set it. The editor backend mounts itself under it with `UsePathBase`,
-and the frontend copies its assets beneath it.
+does not set it. `UseHealthEndpoint` mounts the whole app below it with
+`UsePathBase`, so `/<cell>/<app>/health` is answered as well as `/health`. The
+frontend copies its assets beneath it.
 
 ## Configuration
 

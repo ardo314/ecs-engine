@@ -9,6 +9,7 @@ using NATS.Client.Core;
 Serialization.Initialize();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddHealthEndpoint();
 
 var natsOpts = NatsConfig.CreateOpts();
 var nats = new NatsConnection(natsOpts);
@@ -26,16 +27,9 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-var rawBasePath = Environment.GetEnvironmentVariable("BASE_PATH")?.Trim('/') ?? "";
-if (rawBasePath.Length > 0)
-{
-    app.UsePathBase("/" + rawBasePath);
-}
-
+app.UseHealthEndpoint();
 app.UseCors();
 app.UseWebSockets();
-
-app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 
 // ── Entity management ──────────────────────────────────────────
 

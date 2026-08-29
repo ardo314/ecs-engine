@@ -449,16 +449,23 @@ Every process ships as a container image. Locally they are wired together by
 
 ### Health endpoint
 
-The coordinator and system processes are headless, which orchestrators that
-health-probe over HTTP treat as unhealthy. `HealthEndpoint` — duplicated into
-`Engine` and the C# client SDK, following the same asymmetric-copy rule as the
-core types — answers `GET /health` and `GET /app_icon.png` from a bare
-`TcpListener`, so console apps stay on the `dotnet/runtime` base image instead of
-`dotnet/aspnet`. It always listens on port 8080 — the port every deployment
-target probes — and matches the request on its trailing path segment, so a probe
-that arrives through an ingress prefix such as `/<cell>/<app>/health` is answered
-too. If the port is already taken the process starts without it rather than
-failing, which keeps several local processes on one machine working.
+Orchestrators that health-probe over HTTP treat a headless process as unhealthy,
+so every process — coordinator, systems, editor backend and the NOVA installer —
+hosts a `WebApplication`. `HealthEndpoint` — duplicated into `Engine` and the C#
+client SDK, following the same asymmetric-copy rule as the core types — is the
+extension that adds the probe surface to any of them:
+
+- `builder.AddHealthEndpoint()` binds port 8080, the port every deployment target
+  probes, unless the host was already pointed elsewhere (`ASPNETCORE_URLS`,
+  `--urls`, a launch profile).
+- `app.UseHealthEndpoint()` mounts the app below the host-injected `BASE_PATH`
+  with `UsePathBase` and maps `GET /health` and `GET /app_icon.png`, so a probe
+  that arrives through an ingress prefix such as `/<cell>/<app>/health` is
+  answered too.
+- `HealthEndpoint.TryStartAsync()` builds and starts a host that serves nothing
+  else, for a process with no HTTP surface of its own. It returns null when the
+  port is already taken rather than failing, which keeps several local processes
+  on one machine working. The client SDK's `ECS` starts one for every system.
 
 ### Wandelbots NOVA
 

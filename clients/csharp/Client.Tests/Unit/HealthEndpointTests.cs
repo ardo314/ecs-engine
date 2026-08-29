@@ -1,98 +1,91 @@
+using System.Net;
 using System.Net.Http;
 using Client;
+using Microsoft.AspNetCore.Builder;
 
 namespace Client.Tests.Unit;
 
 public class HealthEndpointTests
 {
-    private static async Task<HttpResponseMessage> GetAsync(HealthEndpoint endpoint, string path)
+    private static HttpClient HttpFor(WebApplication app) => new()
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        return await http.GetAsync($"http://localhost:{endpoint.Port}{path}");
+        BaseAddress = new Uri($"http://localhost:{new Uri(app.Urls.First()).Port}"),
+        Timeout = TimeSpan.FromSeconds(5)
+    };
+
+    private static async Task WithProbeHostAsync(string? basePath, Func<HttpClient, Task> assert)
+    {
+        var previous = Environment.GetEnvironmentVariable("BASE_PATH");
+        Environment.SetEnvironmentVariable("BASE_PATH", basePath);
+        try
+        {
+            await using var app = await HealthEndpoint.TryStartAsync(0);
+            Assert.NotNull(app);
+
+            using var http = HttpFor(app);
+            await assert(http);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("BASE_PATH", previous);
+        }
     }
 
     [Fact]
-    public async Task Health_ReturnsHealthyJson()
+    public Task Health_ReturnsHealthyJson() => WithProbeHostAsync(null, async http =>
     {
-        using var endpoint = new HealthEndpoint(0);
-        endpoint.Start();
+        using var response = await http.GetAsync("/health");
 
-        using var response = await GetAsync(endpoint, "/health");
-
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal("""{"status":"healthy"}""", await response.Content.ReadAsStringAsync());
-    }
+    });
 
     [Fact]
-    public async Task AppIcon_ReturnsAPng()
+    public Task AppIcon_ReturnsAPng() => WithProbeHostAsync(null, async http =>
     {
-        using var endpoint = new HealthEndpoint(0);
-        endpoint.Start();
-
-        using var response = await GetAsync(endpoint, "/app_icon.png");
+        using var response = await http.GetAsync("/app_icon.png");
         var bytes = await response.Content.ReadAsByteArrayAsync();
 
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal([0x89, (byte)'P', (byte)'N', (byte)'G'], bytes[..4]);
-    }
+    });
 
     [Fact]
-    public async Task UnknownPath_Returns404()
+    public Task UnknownPath_Returns404() => WithProbeHostAsync(null, async http =>
     {
-        using var endpoint = new HealthEndpoint(0);
-        endpoint.Start();
+        using var response = await http.GetAsync("/nope");
 
-        using var response = await GetAsync(endpoint, "/nope");
-
-        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
-    }
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    });
 
     [Fact]
-    public async Task Health_IgnoresQueryString()
+    public Task Health_IgnoresQueryString() => WithProbeHostAsync(null, async http =>
     {
-        using var endpoint = new HealthEndpoint(0);
-        endpoint.Start();
+        using var response = await http.GetAsync("/health?probe=1");
 
-        using var response = await GetAsync(endpoint, "/health?probe=1");
-
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
-    }
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    });
 
     [Fact]
-    public async Task Endpoint_KeepsServingAfterAClientHangsUpMidRequest()
-    {
-        using var endpoint = new HealthEndpoint(0);
-        endpoint.Start();
-
-        using (var rude = new System.Net.Sockets.TcpClient())
+    public Task Endpoints_AreServedBelowTheInjectedBasePath() =>
+        WithProbeHostAsync("/cell/ecs-engine", async http =>
         {
-            await rude.ConnectAsync("localhost", endpoint.Port);
-            await rude.GetStream().WriteAsync("GET /health"u8.ToArray());
-        }
+            using var health = await http.GetAsync("/cell/ecs-engine/health");
+            using var icon = await http.GetAsync("/cell/ecs-engine/app_icon.png");
 
-        using var response = await GetAsync(endpoint, "/health");
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
-    }
-
-    [Fact]
-    public void TryStart_ReturnsNullWhenThePortIsTaken()
-    {
-        using var first = new HealthEndpoint(0);
-        first.Start();
-
-        Assert.Null(HealthEndpoint.TryStart(first.Port));
-    }
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, icon.StatusCode);
+        });
 
     [Fact]
-    public async Task Health_IsServedUnderAnIngressPrefix()
+    public async Task TryStartAsync_ReturnsNullWhenThePortIsTaken()
     {
-        using var endpoint = new HealthEndpoint(0);
-        endpoint.Start();
+        await using var first = await HealthEndpoint.TryStartAsync(0);
+        Assert.NotNull(first);
 
-        using var response = await GetAsync(endpoint, "/cell/ecs-engine/health");
-
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        var taken = new Uri(first.Urls.First()).Port;
+        Assert.Null(await HealthEndpoint.TryStartAsync(taken));
     }
 }

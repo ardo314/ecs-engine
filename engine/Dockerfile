@@ -5,7 +5,8 @@ RUN dotnet restore Engine/Engine.csproj
 COPY Engine/ Engine/
 RUN dotnet publish Engine/Engine.csproj -c Release -o /app
 
-FROM mcr.microsoft.com/dotnet/runtime:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:9.0
 WORKDIR /app
 COPY --from=build /app .
+EXPOSE 8080
 ENTRYPOINT ["dotnet", "Engine.dll"]
