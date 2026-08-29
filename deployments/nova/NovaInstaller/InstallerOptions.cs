@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -10,6 +11,17 @@ public sealed record SystemImage(string Name, string Image);
 public sealed class InstallerOptions
 {
     public const string DefaultRegistry = "ghcr.io/ardo314/ecs-engine";
+
+    /// <summary>
+    /// Baked in at build time (<c>-p:ImageTag=…</c>) so the installer deploys the images
+    /// built from its own revision instead of whatever <c>latest</c> currently points at.
+    /// </summary>
+    public static readonly string DefaultImageTag =
+        typeof(InstallerOptions).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "ImageTag")?.Value is { Length: > 0 } bakedTag
+            ? bakedTag
+            : "latest";
 
     public required string NovaBaseUrl { get; init; }
     public required string AccessToken { get; init; }
@@ -35,7 +47,7 @@ public sealed class InstallerOptions
     public static InstallerOptions FromEnvironment(Func<string, string?> read)
     {
         var registry = Value(read, "ECS_IMAGE_REGISTRY") ?? DefaultRegistry;
-        var tag = Value(read, "ECS_IMAGE_TAG") ?? "latest";
+        var tag = Value(read, "ECS_IMAGE_TAG") ?? DefaultImageTag;
         var prefix = AppName.Sanitize(Value(read, "ECS_APP_PREFIX") ?? "ecs");
         if (prefix.Length == 0)
             throw new InstallerConfigurationException("ECS_APP_PREFIX must contain at least one alphanumeric character.");
