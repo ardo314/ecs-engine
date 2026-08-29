@@ -77,9 +77,25 @@ public class StackPlannerTests
         foreach (var app in apps.Where(a => a.Name != "ecs-editor"))
         {
             Assert.Equal(HealthEndpoint.DefaultPort, app.Port);
-            Assert.Equal("/health", app.HealthPath);
+            Assert.Equal("health", app.HealthPath);
             Assert.DoesNotContain(app.Environment!, e => e.Name == "HEALTH_PORT");
         }
+    }
+
+    // NOVA joins these onto BASE_PATH; a leading slash probes /<cell>/<app>//health.
+    [Fact]
+    public void Plan_KeepsProbePathsRelativeToTheAppBasePath()
+    {
+        var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
+        {
+            ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
+        }));
+
+        Assert.All(apps, app =>
+        {
+            Assert.False(app.HealthPath!.StartsWith('/'));
+            Assert.False(app.AppIcon!.StartsWith('/'));
+        });
     }
 
     [Fact]
@@ -168,7 +184,7 @@ public class StackPlannerTests
 
         Assert.Contains("\"app_icon\":\"app_icon.png\"", json);
         Assert.Contains("\"container_image\":{\"image\":", json);
-        Assert.Contains("\"health_path\":\"/health\"", json);
+        Assert.Contains("\"health_path\":\"health\"", json);
         Assert.DoesNotContain("\"storage\"", json);
     }
 }

@@ -14,10 +14,10 @@ coordinator and the client SDK fall back to when `NATS_URL` is unset.
 
 | App | Image | Port | Health |
 |---|---|---|---|
-| `ecs-engine` | `engine` | 8080 | `/health` |
-| `ecs-editor-api` | `editor-backend` | 8080 | `/health` |
-| `ecs-editor` | `editor-frontend` | 80 | `/<cell>/ecs-editor/config.js` |
-| `ecs-<system>` | one per `ECS_SYSTEM_IMAGES` entry | 8080 | `/health` |
+| `ecs-engine` | `engine` | 8080 | `health` |
+| `ecs-editor-api` | `editor-backend` | 8080 | `health` |
+| `ecs-editor` | `editor-frontend` | 80 | `config.js` |
+| `ecs-<system>` | one per `ECS_SYSTEM_IMAGES` entry | 8080 | `health` |
 
 The coordinator is installed first, before anything that talks to it.
 
@@ -29,6 +29,10 @@ NOVA injects `BASE_PATH` (`/<cell>/<app-name>`) into every app, so the installer
 does not set it. `UseHealthEndpoint` mounts the whole app below it with
 `UsePathBase`, so `/<cell>/<app>/health` is answered as well as `/health`. The
 frontend copies its assets beneath it.
+
+NOVA joins `health_path` and `app_icon` onto `BASE_PATH`, which already ends in a
+slash, so both are relative in the manifest — `health`, not `/health`, which
+would be probed as `/<cell>/<app>//health`.
 
 ## Configuration
 
@@ -93,7 +97,7 @@ The installer serves `/health` on port 8080 from the moment installation starts.
 When NOVA's injected `BASE_PATH` is present it keeps serving after the install
 finishes instead of exiting — NOVA restarts an app whose probe stops answering,
 which would reinstall the whole stack in a loop. Install the installer with
-`port: 8080` and `health_path: /health`.
+`port: 8080` and `health_path: health`.
 
 A restart of the installer app still reinstalls the stack, since every existing
 app is deleted and recreated.
