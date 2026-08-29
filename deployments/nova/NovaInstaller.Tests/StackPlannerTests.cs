@@ -67,19 +67,18 @@ public class StackPlannerTests
     }
 
     [Fact]
-    public void Plan_GivesHeadlessAppsAHealthPortMatchingTheirPort()
+    public void Plan_ServesEveryAppOnTheFixedHealthPort()
     {
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
         {
-            ["ECS_INSTALL_EDITOR"] = "false",
             ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
         }));
 
-        foreach (var app in apps)
+        foreach (var app in apps.Where(a => a.Name != "ecs-editor"))
         {
-            var healthPort = app.Environment!.Single(e => e.Name == "HEALTH_PORT").Value;
-            Assert.Equal(app.Port!.Value.ToString(), healthPort);
+            Assert.Equal(HealthEndpoint.DefaultPort, app.Port);
             Assert.Equal("/health", app.HealthPath);
+            Assert.DoesNotContain(app.Environment!, e => e.Name == "HEALTH_PORT");
         }
     }
 
@@ -122,11 +121,15 @@ public class StackPlannerTests
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string> { ["NOVA_CELL"] = "cell" }));
 
         var frontend = apps.Single(a => a.Name == "ecs-editor");
-        Assert.Equal("/cell/ecs-editor", frontend.Environment!.Single(e => e.Name == "BASE_PATH").Value);
         Assert.Equal("/cell/ecs-editor-api", frontend.Environment!.Single(e => e.Name == "EDITOR_BACKEND_URL").Value);
+    }
 
-        var backend = apps.Single(a => a.Name == "ecs-editor-api");
-        Assert.Equal("/cell/ecs-editor-api", backend.Environment!.Single(e => e.Name == "BASE_PATH").Value);
+    [Fact]
+    public void Plan_LeavesBasePathToNova()
+    {
+        var apps = StackPlanner.Plan(Options());
+
+        Assert.DoesNotContain(apps.SelectMany(a => a.Environment!), e => e.Name == "BASE_PATH");
     }
 
     [Fact]

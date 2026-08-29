@@ -29,7 +29,7 @@ public sealed class ECS : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(nats);
         Nats = nats;
-        _health = HealthEndpoint.StartFromEnvironment();
+        _health = HealthEndpoint.TryStart();
     }
 
     /// <summary>

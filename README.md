@@ -68,8 +68,8 @@ deployments/nova/    — Installer for Wandelbots NOVA instances
 Every process reads its NATS address from `NATS_URL`, falling back to
 `NATS_BROKER` (injected by hosts that supply their own broker, such as NOVA, and
 may embed credentials as `nats://user:token@host`) and then to
-`nats://localhost:4222`. Setting `HEALTH_PORT` makes the coordinator and
-system processes serve `/health`, which orchestrators can probe.
+`nats://localhost:4222`. The coordinator and system processes serve `/health` on
+port 8080 for orchestrators to probe.
 
 ## Deployment
 

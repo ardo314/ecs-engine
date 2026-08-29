@@ -28,13 +28,12 @@ public static class StackPlanner
         Name = $"{options.AppPrefix}-engine",
         AppIcon = IconPath,
         ContainerImage = Image(options, options.EngineImage),
-        Port = 8080,
+        Port = HealthEndpoint.DefaultPort,
         HealthPath = "/health",
         Environment =
         [
             .. NatsUrl(options),
-            new EnvVar { Name = "TICK_RATE", Value = options.TickRate.ToString() },
-            new EnvVar { Name = "HEALTH_PORT", Value = "8080" }
+            new EnvVar { Name = "TICK_RATE", Value = options.TickRate.ToString() }
         ]
     };
 
@@ -46,14 +45,9 @@ public static class StackPlanner
             Name = name,
             AppIcon = IconPath,
             ContainerImage = Image(options, options.EditorBackendImage),
-            Port = 5000,
+            Port = HealthEndpoint.DefaultPort,
             HealthPath = "/health",
-            Environment =
-            [
-                .. NatsUrl(options),
-                new EnvVar { Name = "ASPNETCORE_URLS", Value = "http://+:5000" },
-                new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) }
-            ]
+            Environment = [.. NatsUrl(options)]
         };
     }
 
@@ -69,7 +63,6 @@ public static class StackPlanner
             HealthPath = $"{PublicPath(options, name)}/config.js",
             Environment =
             [
-                new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) },
                 // Path-only: config.ts resolves it against the page origin.
                 new EnvVar { Name = "EDITOR_BACKEND_URL", Value = PublicPath(options, $"{options.AppPrefix}-editor-api") }
             ]
@@ -81,13 +74,9 @@ public static class StackPlanner
         Name = $"{options.AppPrefix}-{system.Name}",
         AppIcon = IconPath,
         ContainerImage = Image(options, system.Image),
-        Port = 8080,
+        Port = HealthEndpoint.DefaultPort,
         HealthPath = "/health",
-        Environment =
-        [
-            .. NatsUrl(options),
-            new EnvVar { Name = "HEALTH_PORT", Value = "8080" }
-        ]
+        Environment = [.. NatsUrl(options)]
     };
 
     /// <summary>Omitted unless overridden, so containers fall back to NOVA's NATS_BROKER.</summary>

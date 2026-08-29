@@ -29,7 +29,7 @@ try
         Console.WriteLine("Warning: NOVA_ACCESS_TOKEN is empty; requests will be unauthenticated.");
 
     // Started before the install so the probe is already answering while apps go in.
-    using var health = HealthEndpoint.StartFromEnvironment();
+    using var health = HealthEndpoint.TryStart();
     if (health is not null)
         Console.WriteLine($"Health endpoint listening on port {health.Port}");
 
@@ -55,7 +55,8 @@ try
 
     Console.WriteLine($"\nDone. {manifests.Count} apps installed in cell '{options.Cell}'.");
 
-    if (health is null) return 0;
+    // NOVA injects BASE_PATH into every app it runs; a plain CLI run has none and exits.
+    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BASE_PATH"))) return 0;
 
     // NOVA restarts an app that stops answering its probe, which would reinstall the stack.
     Console.WriteLine("Install complete; serving health probes until stopped.");

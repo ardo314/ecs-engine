@@ -454,8 +454,11 @@ health-probe over HTTP treat as unhealthy. `HealthEndpoint` — duplicated into
 `Engine` and the C# client SDK, following the same asymmetric-copy rule as the
 core types — answers `GET /health` and `GET /app_icon.png` from a bare
 `TcpListener`, so console apps stay on the `dotnet/runtime` base image instead of
-`dotnet/aspnet`. It only listens when `HEALTH_PORT` is set, so local and Compose
-runs are unchanged.
+`dotnet/aspnet`. It always listens on port 8080 — the port every deployment
+target probes — and matches the request on its trailing path segment, so a probe
+that arrives through an ingress prefix such as `/<cell>/<app>/health` is answered
+too. If the port is already taken the process starts without it rather than
+failing, which keeps several local processes on one machine working.
 
 ### Wandelbots NOVA
 
@@ -466,7 +469,7 @@ becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
 | App | Serves |
 | --- | --- |
 | `ecs-engine` | Coordinator |
-| `ecs-editor-api` | Editor backend, mounted at its public path via `BASE_PATH` |
+| `ecs-editor-api` | Editor backend, mounted at the public path NOVA injects as `BASE_PATH` |
 | `ecs-editor` | Editor frontend |
 | `ecs-<system>` | One app per system image |
 
@@ -479,10 +482,10 @@ inside an instance. The coordinator is installed before anything that talks to i
 Re-running the installer deletes and recreates existing apps, so it doubles as an
 upgrade.
 
-The installer can itself be deployed as a NOVA app. With `HEALTH_PORT` set it
-serves `/health` from its own `HealthEndpoint` for the duration of the install and
-then idles, because NOVA restarts an app whose probe stops answering — a
-one-shot process would reinstall the stack on every restart.
+The installer can itself be deployed as a NOVA app. It serves `/health` from its
+own `HealthEndpoint` for the duration of the install and then idles when NOVA's
+injected `BASE_PATH` is present, because NOVA restarts an app whose probe stops
+answering — a one-shot process would reinstall the stack on every restart.
 
 ---
 
