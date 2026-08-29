@@ -3,7 +3,7 @@
 set -eu
 
 base_path=$(printf '/%s/' "${BASE_PATH:-}" | sed 's|//*|/|g')
-backend_url=$(printf '%s' "${EDITOR_BACKEND_URL:-http://localhost:5000}" | sed 's|/*$||')
+backend_url=$(printf '%s' "${EDITOR_BACKEND_URL:-http://localhost:8080}" | sed 's|/*$||')
 backend_js=$(printf '%s' "$backend_url" | sed 's|\\|\\\\|g; s|"|\\"|g')
 
 root=/usr/share/nginx/html

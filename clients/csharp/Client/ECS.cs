@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Builder;
 using NATS.Client.Core;
 
 namespace Client;
@@ -20,7 +21,7 @@ public sealed class ECS : IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly Dictionary<string, World> _worlds = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource _shutdown = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly HealthEndpoint? _health;
+    private readonly Task<WebApplication?> _health;
     private ConsoleCancelEventHandler? _ctrlCHandler;
 
     public const string DefaultWorldName = "default";
@@ -29,7 +30,8 @@ public sealed class ECS : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(nats);
         Nats = nats;
-        _health = HealthEndpoint.TryStart();
+        // Not awaited: the probe host must not delay system startup.
+        _health = HealthEndpoint.TryStartAsync();
     }
 
     /// <summary>
@@ -87,7 +89,10 @@ public sealed class ECS : IAsyncDisposable
     {
         UnhookCtrlC();
         _shutdown.TrySetResult();
-        _health?.Dispose();
+
+        var health = await _health;
+        if (health is not null)
+            await health.DisposeAsync();
 
         World[] worlds;
         lock (_gate)

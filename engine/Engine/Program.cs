@@ -19,11 +19,9 @@ var tickRate = int.TryParse(Environment.GetEnvironmentVariable("TICK_RATE"), out
 
 Console.WriteLine("Engine coordinator starting...");
 
-using var health = HealthEndpoint.TryStart();
+await using var health = await HealthEndpoint.TryStartAsync();
 if (health is not null)
-    Console.WriteLine($"Health endpoint listening on port {health.Port}");
-else
-    Console.WriteLine($"Health endpoint disabled: port {HealthEndpoint.DefaultPort} is already in use.");
+    Console.WriteLine($"Health endpoint listening on {string.Join(", ", health.Urls)}");
 
 await using var nats = new NatsConnection(new NatsOpts { Url = natsUrl });
 await nats.ConnectAsync();

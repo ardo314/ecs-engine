@@ -7,7 +7,10 @@ namespace NovaInstaller;
 /// </summary>
 public static class StackPlanner
 {
+    // NOVA joins these onto the app's BASE_PATH, which already ends in a slash, so both
+    // are relative: a leading slash makes the probe arrive as /<cell>/<app>//health.
     public const string IconPath = "app_icon.png";
+    public const string ProbePath = "health";
 
     public static IReadOnlyList<AppManifest> Plan(InstallerOptions options)
     {
@@ -29,7 +32,7 @@ public static class StackPlanner
         AppIcon = IconPath,
         ContainerImage = Image(options, options.EngineImage),
         Port = HealthEndpoint.DefaultPort,
-        HealthPath = "/health",
+        HealthPath = ProbePath,
         Environment =
         [
             .. NatsUrl(options),
@@ -46,7 +49,7 @@ public static class StackPlanner
             AppIcon = IconPath,
             ContainerImage = Image(options, options.EditorBackendImage),
             Port = HealthEndpoint.DefaultPort,
-            HealthPath = "/health",
+            HealthPath = ProbePath,
             Environment = [.. NatsUrl(options)]
         };
     }
@@ -60,7 +63,7 @@ public static class StackPlanner
             AppIcon = IconPath,
             ContainerImage = Image(options, options.EditorFrontendImage),
             Port = 80,
-            HealthPath = $"{PublicPath(options, name)}/config.js",
+            HealthPath = "config.js",
             Environment =
             [
                 // Path-only: config.ts resolves it against the page origin.
@@ -75,7 +78,7 @@ public static class StackPlanner
         AppIcon = IconPath,
         ContainerImage = Image(options, system.Image),
         Port = HealthEndpoint.DefaultPort,
-        HealthPath = "/health",
+        HealthPath = ProbePath,
         Environment = [.. NatsUrl(options)]
     };
 

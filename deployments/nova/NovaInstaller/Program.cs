@@ -29,9 +29,9 @@ try
         Console.WriteLine("Warning: NOVA_ACCESS_TOKEN is empty; requests will be unauthenticated.");
 
     // Started before the install so the probe is already answering while apps go in.
-    using var health = HealthEndpoint.TryStart();
+    await using var health = await HealthEndpoint.TryStartAsync();
     if (health is not null)
-        Console.WriteLine($"Health endpoint listening on port {health.Port}");
+        Console.WriteLine($"Health endpoint listening on {string.Join(", ", health.Urls)}");
 
     using var client = new NovaAppClient(options.NovaBaseUrl, options.Cell, options.AccessToken);
     var existing = (await client.ListAppNamesAsync(cts.Token)).ToHashSet(StringComparer.Ordinal);

@@ -1,164 +1,92 @@
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Client;
 
 /// <summary>
-/// Minimal HTTP responder that lets a headless system container satisfy an
-/// orchestrator health probe. Serves <c>GET /health</c> and <c>GET /app_icon.png</c>;
-/// anything else returns 404. Deliberately dependency-free so system processes stay
-/// on the dotnet/runtime base image rather than dotnet/aspnet.
+/// The HTTP surface every deployment target probes: <c>GET /health</c> and
+/// <c>GET /app_icon.png</c>. An app that already has a <see cref="WebApplication"/>
+/// adds it with <see cref="AddHealthEndpoint"/>, <see cref="UseBasePath"/> and
+/// <see cref="UseHealthEndpoint"/>; a process with no HTTP surface of its own gets
+/// a host from <see cref="TryStartAsync"/>.
 /// </summary>
-public sealed class HealthEndpoint : IDisposable
+public static class HealthEndpoint
 {
-    /// <summary>Every deployment target probes this port, so it is not configurable.</summary>
+    /// <summary>Every deployment target probes this port, so it is the default everywhere.</summary>
     public const int DefaultPort = 8080;
-
-    private const int MaxRequestLineBytes = 4096;
 
     // 1x1 transparent PNG — NOVA requires an app_icon path to be servable.
     private const string IconBase64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
     private static readonly byte[] Icon = Convert.FromBase64String(IconBase64);
-    private static readonly byte[] HealthBody = """{"status":"healthy"}"""u8.ToArray();
-    private static readonly byte[] NotFoundBody = "not found"u8.ToArray();
-
-    private readonly TcpListener _listener;
-    private readonly CancellationTokenSource _cts = new();
-
-    public HealthEndpoint(int port)
-    {
-        Port = port;
-        _listener = new TcpListener(IPAddress.Any, port);
-    }
-
-    /// <summary>The bound port; resolved from the OS when constructed with port 0.</summary>
-    public int Port { get; private set; }
 
     /// <summary>
-    /// Starts a listener on <see cref="DefaultPort"/>. Returns null when the port is
-    /// already taken — several processes on one dev machine must not fail to start.
+    /// Binds <see cref="DefaultPort"/> unless the host was already pointed elsewhere
+    /// through ASPNETCORE_URLS, <c>--urls</c> or a launch profile.
     /// </summary>
-    public static HealthEndpoint? TryStart(int port = DefaultPort)
+    public static WebApplicationBuilder AddHealthEndpoint(
+        this WebApplicationBuilder builder, int port = DefaultPort)
     {
-        var endpoint = new HealthEndpoint(port);
+        if (string.IsNullOrEmpty(builder.Configuration[WebHostDefaults.ServerUrlsKey]))
+            builder.WebHost.UseUrls($"http://+:{port}");
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Mounts the whole app below the host-injected <c>BASE_PATH</c>, so every endpoint
+    /// it serves is reachable through the ingress prefix. Call before any other middleware.
+    /// </summary>
+    public static WebApplication UseBasePath(this WebApplication app)
+    {
+        var basePath = Environment.GetEnvironmentVariable("BASE_PATH")?.Trim('/') ?? "";
+        if (basePath.Length > 0)
+            app.UsePathBase("/" + basePath);
+
+        return app;
+    }
+
+    /// <summary>Maps the probe endpoints. Pair with <see cref="UseBasePath"/>.</summary>
+    public static WebApplication UseHealthEndpoint(this WebApplication app)
+    {
+        app.MapGet("/health", () => Results.Json(new { status = "healthy" }));
+        app.MapGet("/app_icon.png", () => Results.Bytes(Icon, "image/png"));
+        return app;
+    }
+
+    /// <summary>
+    /// Starts a host that serves nothing but the probe endpoints. Returns null when the
+    /// port is already taken — several processes on one dev machine must not fail to start.
+    /// </summary>
+    public static async Task<WebApplication?> TryStartAsync(
+        int port = DefaultPort, CancellationToken cancellationToken = default)
+    {
+        var builder = WebApplication.CreateSlimBuilder();
+        // A port clash is expected on a dev machine; the message below replaces the host's stack trace.
+        builder.Logging.AddFilter("Microsoft.Extensions.Hosting.Internal.Host", LogLevel.None);
+        // A probe arriving every second must not fill the log with request traces.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+        builder.AddHealthEndpoint(port);
+
+        var app = builder.Build();
+        app.UseBasePath();
+        app.UseHealthEndpoint();
+
         try
         {
-            endpoint.Start();
-            return endpoint;
+            await app.StartAsync(cancellationToken);
+            return app;
         }
-        catch (SocketException)
+        catch (IOException e)
         {
-            endpoint.Dispose();
+            Console.WriteLine($"Health endpoint disabled: {e.Message}");
+            await app.DisposeAsync();
             return null;
         }
-    }
-
-    public void Start()
-    {
-        _listener.Start();
-        Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
-    }
-
-    private async Task AcceptLoopAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            TcpClient client;
-            try
-            {
-                client = await _listener.AcceptTcpClientAsync(ct);
-            }
-            catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException)
-            {
-                return;
-            }
-
-            _ = Task.Run(() => ServeAsync(client, ct), CancellationToken.None);
-        }
-    }
-
-    private static async Task ServeAsync(TcpClient client, CancellationToken ct)
-    {
-        using (client)
-        {
-            try
-            {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(5));
-
-                await using var stream = client.GetStream();
-                var target = await ReadRequestTargetAsync(stream, timeout.Token);
-                await stream.WriteAsync(BuildResponse(target), timeout.Token);
-                await stream.FlushAsync(timeout.Token);
-            }
-            catch
-            {
-                // A probe that hangs up mid-request must never take down the listener.
-            }
-        }
-    }
-
-    private static async Task<string?> ReadRequestTargetAsync(NetworkStream stream, CancellationToken ct)
-    {
-        var buffer = new byte[MaxRequestLineBytes];
-        var count = 0;
-
-        while (count < buffer.Length)
-        {
-            var read = await stream.ReadAsync(buffer.AsMemory(count), ct);
-            if (read == 0) break;
-            count += read;
-
-            var newline = buffer.AsSpan(0, count).IndexOf((byte)'\n');
-            if (newline < 0) continue;
-
-            var parts = Encoding.ASCII.GetString(buffer, 0, newline).TrimEnd('\r').Split(' ');
-            return parts.Length >= 2 && parts[0] == "GET" ? parts[1] : null;
-        }
-
-        return null;
-    }
-
-    // Matched on the trailing segment: a host may probe through its own ingress prefix.
-    private static byte[] BuildResponse(string? target) => LastSegment(StripQuery(target)) switch
-    {
-        "health" or "healthz" => Http(200, "OK", "application/json", HealthBody),
-        "app_icon.png" => Http(200, "OK", "image/png", Icon),
-        _ => Http(404, "Not Found", "text/plain", NotFoundBody)
-    };
-
-    private static string? LastSegment(string? path) =>
-        path is null ? null : path[(path.LastIndexOf('/') + 1)..];
-
-    private static string? StripQuery(string? target)
-    {
-        if (target is null) return null;
-        var query = target.IndexOf('?');
-        return query < 0 ? target : target[..query];
-    }
-
-    private static byte[] Http(int status, string reason, string contentType, byte[] body)
-    {
-        var header = Encoding.ASCII.GetBytes(
-            $"HTTP/1.1 {status} {reason}\r\n" +
-            $"Content-Type: {contentType}\r\n" +
-            $"Content-Length: {body.Length}\r\n" +
-            "Connection: close\r\n\r\n");
-
-        var response = new byte[header.Length + body.Length];
-        header.CopyTo(response, 0);
-        body.CopyTo(response, header.Length);
-        return response;
-    }
-
-    public void Dispose()
-    {
-        _cts.Cancel();
-        _listener.Stop();
-        _cts.Dispose();
     }
 }
