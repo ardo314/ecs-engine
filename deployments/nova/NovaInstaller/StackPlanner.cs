@@ -50,7 +50,6 @@ public static class StackPlanner
             Environment =
             [
                 .. NatsUrl(options),
-                new EnvVar { Name = "ASPNETCORE_URLS", Value = $"http://+:{HealthEndpoint.DefaultPort}" },
                 new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) }
             ]
         };
