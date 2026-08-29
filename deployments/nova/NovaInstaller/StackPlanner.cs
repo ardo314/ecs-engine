@@ -47,11 +47,7 @@ public static class StackPlanner
             ContainerImage = Image(options, options.EditorBackendImage),
             Port = HealthEndpoint.DefaultPort,
             HealthPath = "/health",
-            Environment =
-            [
-                .. NatsUrl(options),
-                new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) }
-            ]
+            Environment = [.. NatsUrl(options)]
         };
     }
 
@@ -67,7 +63,6 @@ public static class StackPlanner
             HealthPath = $"{PublicPath(options, name)}/config.js",
             Environment =
             [
-                new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) },
                 // Path-only: config.ts resolves it against the page origin.
                 new EnvVar { Name = "EDITOR_BACKEND_URL", Value = PublicPath(options, $"{options.AppPrefix}-editor-api") }
             ]

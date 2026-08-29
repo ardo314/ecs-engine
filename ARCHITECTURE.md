@@ -469,7 +469,7 @@ becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
 | App | Serves |
 | --- | --- |
 | `ecs-engine` | Coordinator |
-| `ecs-editor-api` | Editor backend, mounted at its public path via `BASE_PATH` |
+| `ecs-editor-api` | Editor backend, mounted at the public path NOVA injects as `BASE_PATH` |
 | `ecs-editor` | Editor frontend |
 | `ecs-<system>` | One app per system image |
 

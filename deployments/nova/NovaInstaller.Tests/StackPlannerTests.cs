@@ -121,11 +121,15 @@ public class StackPlannerTests
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string> { ["NOVA_CELL"] = "cell" }));
 
         var frontend = apps.Single(a => a.Name == "ecs-editor");
-        Assert.Equal("/cell/ecs-editor", frontend.Environment!.Single(e => e.Name == "BASE_PATH").Value);
         Assert.Equal("/cell/ecs-editor-api", frontend.Environment!.Single(e => e.Name == "EDITOR_BACKEND_URL").Value);
+    }
 
-        var backend = apps.Single(a => a.Name == "ecs-editor-api");
-        Assert.Equal("/cell/ecs-editor-api", backend.Environment!.Single(e => e.Name == "BASE_PATH").Value);
+    [Fact]
+    public void Plan_LeavesBasePathToNova()
+    {
+        var apps = StackPlanner.Plan(Options());
+
+        Assert.DoesNotContain(apps.SelectMany(a => a.Environment!), e => e.Name == "BASE_PATH");
     }
 
     [Fact]

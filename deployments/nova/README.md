@@ -27,6 +27,10 @@ containers are headless, so they serve `/health` and `/app_icon.png` from
 is matched on the trailing path segment, so `/<cell>/<app>/health` is answered as
 well as `/health`.
 
+NOVA injects `BASE_PATH` (`/<cell>/<app-name>`) into every app, so the installer
+does not set it. The editor backend mounts itself under it with `UsePathBase`,
+and the frontend copies its assets beneath it.
+
 ## Configuration
 
 All configuration is via environment variables.
