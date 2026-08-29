@@ -27,6 +27,9 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Before every other middleware: the whole API, not just the probes, is served
+// below the prefix NOVA publishes the app under.
+app.UseBasePath();
 app.UseHealthEndpoint();
 app.UseCors();
 app.UseWebSockets();

@@ -9,10 +9,10 @@ namespace Engine.Core;
 
 /// <summary>
 /// The HTTP surface every deployment target probes: <c>GET /health</c> and
-/// <c>GET /app_icon.png</c>, served below the host-injected <c>BASE_PATH</c>.
-/// An app that already has a <see cref="WebApplication"/> adds it with
-/// <see cref="AddHealthEndpoint"/> plus <see cref="UseHealthEndpoint"/>; a process
-/// with no HTTP surface of its own gets a host from <see cref="TryStartAsync"/>.
+/// <c>GET /app_icon.png</c>. An app that already has a <see cref="WebApplication"/>
+/// adds it with <see cref="AddHealthEndpoint"/>, <see cref="UseBasePath"/> and
+/// <see cref="UseHealthEndpoint"/>; a process with no HTTP surface of its own gets
+/// a host from <see cref="TryStartAsync"/>.
 /// </summary>
 public static class HealthEndpoint
 {
@@ -39,15 +39,21 @@ public static class HealthEndpoint
     }
 
     /// <summary>
-    /// Mounts the app below <c>BASE_PATH</c> and maps the probe endpoints. Call before
-    /// any other middleware so the whole app is served relative to the base path.
+    /// Mounts the whole app below the host-injected <c>BASE_PATH</c>, so every endpoint
+    /// it serves is reachable through the ingress prefix. Call before any other middleware.
     /// </summary>
-    public static WebApplication UseHealthEndpoint(this WebApplication app)
+    public static WebApplication UseBasePath(this WebApplication app)
     {
         var basePath = Environment.GetEnvironmentVariable("BASE_PATH")?.Trim('/') ?? "";
         if (basePath.Length > 0)
             app.UsePathBase("/" + basePath);
 
+        return app;
+    }
+
+    /// <summary>Maps the probe endpoints. Pair with <see cref="UseBasePath"/>.</summary>
+    public static WebApplication UseHealthEndpoint(this WebApplication app)
+    {
         app.MapGet("/health", () => Results.Json(new { status = "healthy" }));
         app.MapGet("/app_icon.png", () => Results.Bytes(Icon, "image/png"));
         return app;
@@ -68,6 +74,7 @@ public static class HealthEndpoint
         builder.AddHealthEndpoint(port);
 
         var app = builder.Build();
+        app.UseBasePath();
         app.UseHealthEndpoint();
 
         try

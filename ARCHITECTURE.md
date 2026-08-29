@@ -458,10 +458,11 @@ extension that adds the probe surface to any of them:
 - `builder.AddHealthEndpoint()` binds port 8080, the port every deployment target
   probes, unless the host was already pointed elsewhere (`ASPNETCORE_URLS`,
   `--urls`, a launch profile).
-- `app.UseHealthEndpoint()` mounts the app below the host-injected `BASE_PATH`
-  with `UsePathBase` and maps `GET /health` and `GET /app_icon.png`, so a probe
-  that arrives through an ingress prefix such as `/<cell>/<app>/health` is
-  answered too.
+- `app.UseBasePath()` mounts the whole app below the host-injected `BASE_PATH`
+  with `UsePathBase`, so every endpoint — not only the probes — is reachable
+  through the ingress prefix (`/<cell>/<app>/api/entities`). It goes before any
+  other middleware.
+- `app.UseHealthEndpoint()` maps `GET /health` and `GET /app_icon.png`.
 - `HealthEndpoint.TryStartAsync()` builds and starts a host that serves nothing
   else, for a process with no HTTP surface of its own. It returns null when the
   port is already taken rather than failing, which keeps several local processes

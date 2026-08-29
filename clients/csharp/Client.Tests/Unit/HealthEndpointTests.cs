@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http;
 using Client;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 
 namespace Client.Tests.Unit;
 
@@ -78,6 +80,33 @@ public class HealthEndpointTests
             Assert.Equal(HttpStatusCode.OK, health.StatusCode);
             Assert.Equal(HttpStatusCode.OK, icon.StatusCode);
         });
+
+    [Fact]
+    public async Task BasePath_AppliesToEveryEndpointNotJustTheProbes()
+    {
+        var previous = Environment.GetEnvironmentVariable("BASE_PATH");
+        Environment.SetEnvironmentVariable("BASE_PATH", "/cell/ecs-editor-api");
+        try
+        {
+            var builder = WebApplication.CreateSlimBuilder();
+            builder.AddHealthEndpoint(0);
+
+            await using var app = builder.Build();
+            app.UseBasePath();
+            app.UseHealthEndpoint();
+            app.MapGet("/api/entities", () => Results.Ok());
+            await app.StartAsync();
+
+            using var http = HttpFor(app);
+            using var response = await http.GetAsync("/cell/ecs-editor-api/api/entities");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("BASE_PATH", previous);
+        }
+    }
 
     [Fact]
     public async Task TryStartAsync_ReturnsNullWhenThePortIsTaken()

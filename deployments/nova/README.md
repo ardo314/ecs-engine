@@ -26,8 +26,8 @@ NOVA restarts any app whose health probe fails. Every process therefore hosts a
 `/app_icon.png` on port 8080 — the port NOVA probes.
 
 NOVA injects `BASE_PATH` (`/<cell>/<app-name>`) into every app, so the installer
-does not set it. `UseHealthEndpoint` mounts the whole app below it with
-`UsePathBase`, so `/<cell>/<app>/health` is answered as well as `/health`. The
+does not set it. `UseBasePath` mounts the whole app below it with `UsePathBase`,
+so every endpoint — probes included — answers under `/<cell>/<app>/`. The
 frontend copies its assets beneath it.
 
 NOVA joins `health_path` and `app_icon` onto `BASE_PATH`, which already ends in a
