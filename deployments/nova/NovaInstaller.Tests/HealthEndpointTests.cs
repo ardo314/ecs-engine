@@ -18,18 +18,11 @@ public class HealthEndpointTests
     }
 
     [Fact]
-    public void StartFromEnvironment_ReturnsNullWhenHealthPortIsUnset()
+    public void TryStart_ReturnsNullWhenThePortIsTaken()
     {
-        var previous = Environment.GetEnvironmentVariable("HEALTH_PORT");
-        Environment.SetEnvironmentVariable("HEALTH_PORT", null);
+        using var first = new HealthEndpoint(0);
+        first.Start();
 
-        try
-        {
-            Assert.Null(HealthEndpoint.StartFromEnvironment());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HEALTH_PORT", previous);
-        }
+        Assert.Null(HealthEndpoint.TryStart(first.Port));
     }
 }

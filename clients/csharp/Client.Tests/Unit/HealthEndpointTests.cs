@@ -77,34 +77,22 @@ public class HealthEndpointTests
     }
 
     [Fact]
-    public void StartFromEnvironment_ReturnsNullWhenHealthPortIsUnset()
+    public void TryStart_ReturnsNullWhenThePortIsTaken()
     {
-        var original = Environment.GetEnvironmentVariable("HEALTH_PORT");
-        Environment.SetEnvironmentVariable("HEALTH_PORT", null);
+        using var first = new HealthEndpoint(0);
+        first.Start();
 
-        try
-        {
-            Assert.Null(HealthEndpoint.StartFromEnvironment());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HEALTH_PORT", original);
-        }
+        Assert.Null(HealthEndpoint.TryStart(first.Port));
     }
 
     [Fact]
-    public void StartFromEnvironment_ReturnsNullWhenHealthPortIsNotAPort()
+    public async Task Health_IsServedUnderAnIngressPrefix()
     {
-        var original = Environment.GetEnvironmentVariable("HEALTH_PORT");
-        Environment.SetEnvironmentVariable("HEALTH_PORT", "not-a-port");
+        using var endpoint = new HealthEndpoint(0);
+        endpoint.Start();
 
-        try
-        {
-            Assert.Null(HealthEndpoint.StartFromEnvironment());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HEALTH_PORT", original);
-        }
+        using var response = await GetAsync(endpoint, "/cell/ecs-engine/health");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
     }
 }

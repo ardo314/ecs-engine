@@ -15,7 +15,7 @@ coordinator and the client SDK fall back to when `NATS_URL` is unset.
 | App | Image | Port | Health |
 |---|---|---|---|
 | `ecs-engine` | `engine` | 8080 | `/health` |
-| `ecs-editor-api` | `editor-backend` | 5000 | `/health` |
+| `ecs-editor-api` | `editor-backend` | 8080 | `/health` |
 | `ecs-editor` | `editor-frontend` | 80 | `/<cell>/ecs-editor/config.js` |
 | `ecs-<system>` | one per `ECS_SYSTEM_IMAGES` entry | 8080 | `/health` |
 
@@ -23,8 +23,9 @@ The coordinator is installed first, before anything that talks to it.
 
 NOVA restarts any app whose health probe fails. The coordinator and system
 containers are headless, so they serve `/health` and `/app_icon.png` from
-`HealthEndpoint`, which only listens when `HEALTH_PORT` is set — local and
-Docker Compose runs are unaffected.
+`HealthEndpoint`, which always listens on 8080 — the port NOVA probes. The probe
+is matched on the trailing path segment, so `/<cell>/<app>/health` is answered as
+well as `/health`.
 
 ## Configuration
 
@@ -48,7 +49,6 @@ All configuration is via environment variables.
 | `ECS_REGISTRY_USER` | *(unset)* | Pull credentials; both parts required |
 | `ECS_REGISTRY_PASSWORD` | *(unset)* | Pull credentials; both parts required |
 | `ECS_DRY_RUN` | `false` | Print manifests instead of calling NOVA |
-| `HEALTH_PORT` | *(unset)* | Serve `/health`, and idle after installing, instead of exiting |
 
 `ECS_SYSTEM_IMAGES` entries may be a bare image (`ghcr.io/acme/movement-system:1.0`,
 whose repository segment becomes the app name) or an explicit `name=image` pair.
@@ -86,15 +86,11 @@ Leave `NOVA_BASE_URL` and `NOVA_CELL` unset — the installer falls back to the
 `NOVA_API` may carry an `/api/v1` suffix or no scheme; both are normalised away,
 since the client appends its own API path.
 
-Set `HEALTH_PORT` to the app's port. The installer then serves `/health` from the
-moment installation starts and keeps serving after it finishes, instead of
-exiting — NOVA restarts an app whose probe stops answering, which would reinstall
-the whole stack in a loop. Install the installer with `port: 8080`,
-`health_path: /health` and:
-
-```json
-"environment": [{ "name": "HEALTH_PORT", "value": "8080" }]
-```
+The installer serves `/health` on port 8080 from the moment installation starts.
+When NOVA's injected `BASE_PATH` is present it keeps serving after the install
+finishes instead of exiting — NOVA restarts an app whose probe stops answering,
+which would reinstall the whole stack in a loop. Install the installer with
+`port: 8080` and `health_path: /health`.
 
 A restart of the installer app still reinstalls the stack, since every existing
 app is deleted and recreated.

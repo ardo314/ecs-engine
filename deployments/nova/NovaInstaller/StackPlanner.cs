@@ -28,13 +28,12 @@ public static class StackPlanner
         Name = $"{options.AppPrefix}-engine",
         AppIcon = IconPath,
         ContainerImage = Image(options, options.EngineImage),
-        Port = 8080,
+        Port = HealthEndpoint.DefaultPort,
         HealthPath = "/health",
         Environment =
         [
             .. NatsUrl(options),
-            new EnvVar { Name = "TICK_RATE", Value = options.TickRate.ToString() },
-            new EnvVar { Name = "HEALTH_PORT", Value = "8080" }
+            new EnvVar { Name = "TICK_RATE", Value = options.TickRate.ToString() }
         ]
     };
 
@@ -46,12 +45,12 @@ public static class StackPlanner
             Name = name,
             AppIcon = IconPath,
             ContainerImage = Image(options, options.EditorBackendImage),
-            Port = 5000,
+            Port = HealthEndpoint.DefaultPort,
             HealthPath = "/health",
             Environment =
             [
                 .. NatsUrl(options),
-                new EnvVar { Name = "ASPNETCORE_URLS", Value = "http://+:5000" },
+                new EnvVar { Name = "ASPNETCORE_URLS", Value = $"http://+:{HealthEndpoint.DefaultPort}" },
                 new EnvVar { Name = "BASE_PATH", Value = PublicPath(options, name) }
             ]
         };
@@ -81,13 +80,9 @@ public static class StackPlanner
         Name = $"{options.AppPrefix}-{system.Name}",
         AppIcon = IconPath,
         ContainerImage = Image(options, system.Image),
-        Port = 8080,
+        Port = HealthEndpoint.DefaultPort,
         HealthPath = "/health",
-        Environment =
-        [
-            .. NatsUrl(options),
-            new EnvVar { Name = "HEALTH_PORT", Value = "8080" }
-        ]
+        Environment = [.. NatsUrl(options)]
     };
 
     /// <summary>Omitted unless overridden, so containers fall back to NOVA's NATS_BROKER.</summary>

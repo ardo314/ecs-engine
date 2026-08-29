@@ -12,6 +12,9 @@ namespace Client;
 /// </summary>
 public sealed class HealthEndpoint : IDisposable
 {
+    /// <summary>Every deployment target probes this port, so it is not configurable.</summary>
+    public const int DefaultPort = 8080;
+
     private const int MaxRequestLineBytes = 4096;
 
     // 1x1 transparent PNG — NOVA requires an app_icon path to be servable.
@@ -35,18 +38,22 @@ public sealed class HealthEndpoint : IDisposable
     public int Port { get; private set; }
 
     /// <summary>
-    /// Starts a listener when <c>HEALTH_PORT</c> is set to a valid port, otherwise
-    /// returns null so local and compose runs stay unaffected.
+    /// Starts a listener on <see cref="DefaultPort"/>. Returns null when the port is
+    /// already taken — several processes on one dev machine must not fail to start.
     /// </summary>
-    public static HealthEndpoint? StartFromEnvironment()
+    public static HealthEndpoint? TryStart(int port = DefaultPort)
     {
-        var raw = Environment.GetEnvironmentVariable("HEALTH_PORT");
-        if (!int.TryParse(raw, out var port) || port is < 1 or > 65535)
-            return null;
-
         var endpoint = new HealthEndpoint(port);
-        endpoint.Start();
-        return endpoint;
+        try
+        {
+            endpoint.Start();
+            return endpoint;
+        }
+        catch (SocketException)
+        {
+            endpoint.Dispose();
+            return null;
+        }
     }
 
     public void Start()
@@ -116,12 +123,16 @@ public sealed class HealthEndpoint : IDisposable
         return null;
     }
 
-    private static byte[] BuildResponse(string? target) => StripQuery(target) switch
+    // Matched on the trailing segment: a host may probe through its own ingress prefix.
+    private static byte[] BuildResponse(string? target) => LastSegment(StripQuery(target)) switch
     {
-        "/health" or "/healthz" => Http(200, "OK", "application/json", HealthBody),
-        "/app_icon.png" => Http(200, "OK", "image/png", Icon),
+        "health" or "healthz" => Http(200, "OK", "application/json", HealthBody),
+        "app_icon.png" => Http(200, "OK", "image/png", Icon),
         _ => Http(404, "Not Found", "text/plain", NotFoundBody)
     };
+
+    private static string? LastSegment(string? path) =>
+        path is null ? null : path[(path.LastIndexOf('/') + 1)..];
 
     private static string? StripQuery(string? target)
     {
