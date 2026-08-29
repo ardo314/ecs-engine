@@ -45,7 +45,7 @@ All configuration is via environment variables.
 | `NOVA_CELL` | `CELL_NAME`, else `cell` | Target cell |
 | `ECS_APP_PREFIX` | `ecs` | Prefix for every app name |
 | `ECS_IMAGE_REGISTRY` | `ghcr.io/ardo314/ecs-engine` | Registry the default images come from |
-| `ECS_IMAGE_TAG` | `latest` | Tag for the default images |
+| `ECS_IMAGE_TAG` | the installer's own build revision (`latest` for local builds) | Tag for the default images |
 | `ECS_ENGINE_IMAGE` | derived | Overrides the engine image |
 | `ECS_EDITOR_BACKEND_IMAGE` | derived | Overrides the editor backend image |
 | `ECS_EDITOR_FRONTEND_IMAGE` | derived | Overrides the editor frontend image |

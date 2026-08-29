@@ -131,6 +131,8 @@ jobs:
           - name: nova-installer
             context: ./deployments/nova
             dockerfile: ./deployments/nova/Dockerfile
+            # Bakes the revision tag in so the installer deploys images from this same commit.
+            build-args: ECS_IMAGE_TAG=sha-${{ github.sha }}
 
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +164,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: ${{ matrix.build-args }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}

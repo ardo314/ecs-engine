@@ -20,6 +20,16 @@ public class InstallerOptionsTests
     }
 
     [Fact]
+    public void FromEnvironment_DefaultsToTheTagBakedInAtBuildTime()
+    {
+        var options = Options([]);
+
+        Assert.Equal($"{InstallerOptions.DefaultRegistry}/engine:{InstallerOptions.DefaultImageTag}", options.EngineImage);
+        Assert.Equal($"{InstallerOptions.DefaultRegistry}/editor-backend:{InstallerOptions.DefaultImageTag}", options.EditorBackendImage);
+        Assert.Equal($"{InstallerOptions.DefaultRegistry}/editor-frontend:{InstallerOptions.DefaultImageTag}", options.EditorFrontendImage);
+    }
+
+    [Fact]
     public void FromEnvironment_LeavesNatsUrlUnsetByDefault()
     {
         Assert.Null(Options([]).NatsUrl);
