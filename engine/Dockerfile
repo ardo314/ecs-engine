@@ -1,9 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
-COPY Engine/Engine.csproj Engine/
-RUN dotnet restore Engine/Engine.csproj
-COPY Engine/ Engine/
-RUN dotnet publish Engine/Engine.csproj -c Release -o /app
+COPY proto/gen/csharp/Ecs.Protos.csproj proto/gen/csharp/
+COPY engine/Engine/Engine.csproj engine/Engine/
+RUN dotnet restore engine/Engine/Engine.csproj
+COPY proto/gen/csharp/ proto/gen/csharp/
+COPY engine/Engine/ engine/Engine/
+RUN dotnet publish engine/Engine/Engine.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0
 WORKDIR /app

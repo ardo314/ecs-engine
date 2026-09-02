@@ -1,8 +1,10 @@
 using Client;
 using Engine.Core;
 using Engine.Core.Messages;
+using Google.Protobuf;
 using MessagePack;
 using NATS.Client.Core;
+using Testing.V1;
 
 using Client.Tests.Unit;
 
@@ -17,8 +19,8 @@ public class EmptySystem : SystemBase
 
 public class SpawnSystem : SystemBase
 {
-    private readonly IComponent[] _components;
-    public SpawnSystem(params IComponent[] components) { _components = components; }
+    private readonly IMessage[] _components;
+    public SpawnSystem(params IMessage[] components) { _components = components; }
     protected override void OnAdd()
     {
         Commands.CreateEntity(_components);
@@ -57,9 +59,11 @@ public class TickProcessorSystem : SystemBase
         {
             var pos = _q.Get<TestPosition>(entity);
             var vel = _q.Get<TestVelocity>(entity);
-            _q.Set(entity, new TestPosition(
-                pos.X + vel.Vx * DeltaTime,
-                pos.Y + vel.Vy * DeltaTime));
+            _q.Set(entity, new TestPosition
+            {
+                X = pos.X + vel.Vx * DeltaTime,
+                Y = pos.Y + vel.Vy * DeltaTime
+            });
         }
         Interlocked.Increment(ref TicksProcessed);
         return Task.CompletedTask;
@@ -320,7 +324,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         foreach (var e in entities.Entities)
         {
             if (!e.Components.ContainsKey(velType)) continue;
-            var v = MessagePackSerializer.Deserialize<TestVelocity>(e.Components[velType]);
+            var v = TestVelocity.Parser.ParseFrom(e.Components[velType]);
             if (Math.Abs(v.Vx - 10.0f) < 0.01f && Math.Abs(v.Vy - 5.0f) < 0.01f)
             {
                 match = e;
@@ -329,7 +333,7 @@ public class SystemRunnerIntegrationTests : IAsyncLifetime
         }
         Assert.NotNull(match);
 
-        var finalPos = MessagePackSerializer.Deserialize<TestPosition>(match.Components[posType]);
+        var finalPos = TestPosition.Parser.ParseFrom(match.Components[posType]);
         Assert.True(finalPos.X > 0.0f,
             $"Expected Position.X > 0 after system ticks, got {finalPos.X}");
         Assert.True(finalPos.Y > 0.0f,

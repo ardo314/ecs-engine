@@ -1,15 +1,10 @@
 using Client;
 using Engine.Core;
 using Engine.Core.Messages;
-using MessagePack;
+using Google.Protobuf;
+using Testing.V1;
 
 namespace Client.Tests.Unit;
-
-public record struct TestPosition(float X, float Y) : IComponent;
-
-public record struct TestVelocity(float Vx, float Vy) : IComponent;
-
-public record struct TestDisabled() : IComponent;
 
 [Trait("Category", "Unit")]
 public class EntityQueryTests
@@ -32,7 +27,7 @@ public class EntityQueryTests
         return shards;
     }
 
-    private static byte[] Ser<T>(T value) => MessagePackSerializer.Serialize(value);
+    private static byte[] Ser<T>(T value) where T : IMessage<T>, new() => value.ToByteArray();
 
     // ── Builder → Descriptor ───────────────────────────────────
 
@@ -89,8 +84,8 @@ public class EntityQueryTests
         var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
 
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f })), (2, Ser(new TestPosition { X = 3f, Y = 4f }))]),
+            (velType, [(1, Ser(new TestVelocity { Vx = 5f, Vy = 6f }))]));
         // Entity 2 only has Position → should not match
 
         query.Populate(shards, tickId: 1);
@@ -112,8 +107,8 @@ public class EntityQueryTests
 
         // Entity 1 has both, entity 2 has only Position
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f })), (2, Ser(new TestPosition { X = 3f, Y = 4f }))]),
+            (velType, [(1, Ser(new TestVelocity { Vx = 5f, Vy = 6f }))]));
 
         query.Populate(shards, tickId: 1);
 
@@ -135,7 +130,7 @@ public class EntityQueryTests
 
         // Entity 1 has Position only, entity 2 has Position + Disabled
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f })), (2, Ser(new TestPosition { X = 3f, Y = 4f }))]),
             (disabledType, [(2, Ser(new TestDisabled()))]));
 
         query.Populate(shards, tickId: 1);
@@ -167,7 +162,7 @@ public class EntityQueryTests
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(10f, 20f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 10f, Y = 20f }))]));
         query.Populate(shards, tickId: 1);
 
         var pos = query.Get<TestPosition>(new Entity(1));
@@ -206,7 +201,7 @@ public class EntityQueryTests
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(7f, 8f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 7f, Y = 8f }))]));
         query.Populate(shards, tickId: 1);
 
         Assert.True(query.TryGet<TestPosition>(new Entity(1), out var pos));
@@ -221,7 +216,7 @@ public class EntityQueryTests
         query.Freeze();
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+        var shards = MakeShards((posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]));
         query.Populate(shards, tickId: 1);
 
         Assert.True(query.Has<TestPosition>(new Entity(1)));
@@ -238,10 +233,10 @@ public class EntityQueryTests
         query.Freeze();
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+        var shards = MakeShards((posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]));
         query.Populate(shards, tickId: 42);
 
-        query.Set(new Entity(1), new TestPosition(99f, 100f));
+        query.Set(new Entity(1), new TestPosition { X = 99f, Y = 100f });
 
         var mutations = query.FlushMutations();
         Assert.Single(mutations);
@@ -258,11 +253,11 @@ public class EntityQueryTests
         query.Freeze();
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+        var shards = MakeShards((posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]));
         query.Populate(shards, tickId: 1);
 
         Assert.Throws<InvalidOperationException>(() =>
-            query.Set(new Entity(1), new TestPosition(99f, 100f)));
+            query.Set(new Entity(1), new TestPosition { X = 99f, Y = 100f }));
     }
 
     [Fact]
@@ -273,10 +268,10 @@ public class EntityQueryTests
         query.Freeze();
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+        var shards = MakeShards((posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]));
         query.Populate(shards, tickId: 1);
 
-        query.Set(new Entity(1), new TestPosition(5f, 6f));
+        query.Set(new Entity(1), new TestPosition { X = 5f, Y = 6f });
         Assert.Single(query.FlushMutations());
         Assert.Empty(query.FlushMutations());
     }
@@ -295,8 +290,8 @@ public class EntityQueryTests
         var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
 
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
-            (velType, [(1, Ser(new TestVelocity(3f, 4f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]),
+            (velType, [(1, Ser(new TestVelocity { Vx = 3f, Vy = 4f }))]));
         query.Populate(shards, tickId: 1);
 
         var results = query.Each<TestPosition, TestVelocity>().ToList();
@@ -333,8 +328,8 @@ public class EntityQueryTests
 
         // Entity 1 and 2 both have Position, but only entity 1 carries the tagged type
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f })), (2, Ser(new TestPosition { X = 3f, Y = 4f }))]),
+            (velType, [(1, Ser(new TestVelocity { Vx = 5f, Vy = 6f }))]));
 
         query.Populate(shards, tickId: 1, TagResolution(velType));
 
@@ -351,7 +346,7 @@ public class EntityQueryTests
         query.Freeze();
 
         var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+        var shards = MakeShards((posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]));
 
         query.Populate(shards, tickId: 1, TagResolution());
 
@@ -370,8 +365,8 @@ public class EntityQueryTests
         var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
 
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]),
+            (velType, [(1, Ser(new TestVelocity { Vx = 5f, Vy = 6f }))]));
         query.Populate(shards, tickId: 1, TagResolution(velType));
 
         var tagged = query.GetTagged<TestSetting>(new Entity(1)).ToList();
@@ -393,12 +388,12 @@ public class EntityQueryTests
         var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
 
         var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
+            (posType, [(1, Ser(new TestPosition { X = 1f, Y = 2f }))]),
+            (velType, [(1, Ser(new TestVelocity { Vx = 5f, Vy = 6f }))]));
         query.Populate(shards, tickId: 1, TagResolution(velType));
 
         Assert.Throws<InvalidOperationException>(() =>
-            query.Set(new Entity(1), new TestVelocity(9f, 9f)));
+            query.Set(new Entity(1), new TestVelocity { Vx = 9f, Vy = 9f }));
     }
 
     private static Dictionary<string, string[]> TagResolution(params string[] typeNames) =>

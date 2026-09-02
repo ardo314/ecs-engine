@@ -205,11 +205,11 @@ public class TickLoop
 
             foreach (var compType in allTypes)
             {
-                var dataChunks = new List<byte[]>();
+                // null means "absent" — an empty protobuf message is zero bytes, so length can't say.
+                var dataChunks = new List<byte[]?>();
                 foreach (var eid in entityArray)
                 {
-                    var data = _world.GetComponent(eid, compType);
-                    dataChunks.Add(data ?? []);
+                    dataChunks.Add(_world.GetComponent(eid, compType));
                 }
 
                 var shard = new ComponentShard

@@ -1,5 +1,6 @@
 using Engine.Core;
 using Engine.Core.Messages;
+using Google.Protobuf;
 using MessagePack;
 
 namespace Client;
@@ -71,7 +72,7 @@ public class EntityQuery
     /// <summary>
     /// Excludes entities that have the specified component.
     /// </summary>
-    public EntityQuery Without<T>() where T : IComponent
+    public EntityQuery Without<T>() where T : IMessage<T>, new()
     {
         ThrowIfFrozen();
         var access = Query.ReadOnly<T>();
@@ -87,7 +88,7 @@ public class EntityQuery
     /// without changing this query. Tagged components are read-only — access them via
     /// <see cref="GetTagged{TTag}"/> or, when the concrete type is known, <see cref="TryGet{T}"/>.
     /// </summary>
-    public EntityQuery WithAnyTagged<TTag>() where TTag : IComponent
+    public EntityQuery WithAnyTagged<TTag>() where TTag : IMessage<TTag>, new()
     {
         ThrowIfFrozen();
         var access = Query.ReadOnly<TTag>();
@@ -153,7 +154,7 @@ public class EntityQuery
             var dict = new Dictionary<ulong, byte[]>();
             for (var i = 0; i < entities.Length && i < data.Length; i++)
             {
-                if (data[i].Length > 0)
+                if (data[i] is not null)
                     dict[entities[i]] = data[i];
             }
             _data[typeName] = dict;
@@ -237,25 +238,25 @@ public class EntityQuery
     /// <summary>
     /// Gets a component value for the given entity. Throws if not found.
     /// </summary>
-    public T Get<T>(Entity entity) where T : IComponent
+    public T Get<T>(Entity entity) where T : IMessage<T>, new()
     {
         var typeName = ComponentTypeId.Of<T>().TypeName;
         if (_data.TryGetValue(typeName, out var dict) && dict.TryGetValue(entity.Id, out var bytes))
-            return MessagePackSerializer.Deserialize<T>(bytes);
+            return ProtoCodec.Decode<T>(bytes);
 
         throw new KeyNotFoundException(
-            $"Entity {entity.Id} does not have component {typeof(T).Name} in this query.");
+            $"Entity {entity.Id} does not have component {typeName} in this query.");
     }
 
     /// <summary>
     /// Tries to get a component value for the given entity.
     /// </summary>
-    public bool TryGet<T>(Entity entity, out T component) where T : IComponent
+    public bool TryGet<T>(Entity entity, out T component) where T : IMessage<T>, new()
     {
         var typeName = ComponentTypeId.Of<T>().TypeName;
         if (_data.TryGetValue(typeName, out var dict) && dict.TryGetValue(entity.Id, out var bytes))
         {
-            component = MessagePackSerializer.Deserialize<T>(bytes);
+            component = ProtoCodec.Decode<T>(bytes);
             return true;
         }
         component = default!;
@@ -265,7 +266,7 @@ public class EntityQuery
     /// <summary>
     /// Checks if the given entity has the specified component in this query's data.
     /// </summary>
-    public bool Has<T>(Entity entity) where T : IComponent
+    public bool Has<T>(Entity entity) where T : IMessage<T>, new()
     {
         var typeName = ComponentTypeId.Of<T>().TypeName;
         return _data.TryGetValue(typeName, out var dict) && dict.ContainsKey(entity.Id);
@@ -274,24 +275,24 @@ public class EntityQuery
     /// <summary>
     /// Buffers a component mutation. Throws if the component was declared ReadOnly.
     /// </summary>
-    public void Set<T>(Entity entity, T component) where T : IComponent
+    public void Set<T>(Entity entity, T component) where T : IMessage<T>, new()
     {
         var typeName = ComponentTypeId.Of<T>().TypeName;
 
         if (_readOnlyTypes.Contains(typeName))
             throw new InvalidOperationException(
-                $"Cannot write to component {typeof(T).Name} — it was declared as ReadOnly in this query.");
+                $"Cannot write to component {typeName} — it was declared as ReadOnly in this query.");
 
         if (IsTagged(typeName))
             throw new InvalidOperationException(
-                $"Cannot write to component {typeof(T).Name} — it is only in this query through a tag join, which is read-only.");
+                $"Cannot write to component {typeName} — it is only in this query through a tag join, which is read-only.");
 
         if (!_mutations.TryGetValue(typeName, out var dict))
         {
             dict = new Dictionary<ulong, byte[]>();
             _mutations[typeName] = dict;
         }
-        dict[entity.Id] = MessagePackSerializer.Serialize(component);
+        dict[entity.Id] = component.ToByteArray();
     }
 
     // ── Tag joins ───────────────────────────────────────────
@@ -299,7 +300,7 @@ public class EntityQuery
     /// <summary>
     /// The component type names carrying <typeparamref name="TTag"/> this tick.
     /// </summary>
-    public IReadOnlyList<string> TaggedTypeNames<TTag>() where TTag : IComponent =>
+    public IReadOnlyList<string> TaggedTypeNames<TTag>() where TTag : IMessage<TTag>, new() =>
         _resolvedTags.TryGetValue(ComponentTypeId.Of<TTag>().TypeName, out var types) ? types : [];
 
     /// <summary>
@@ -307,7 +308,7 @@ public class EntityQuery
     /// Values are raw because the concrete types are only known at runtime — use
     /// <see cref="TaggedComponent.As{T}"/> once the type name identifies one you know.
     /// </summary>
-    public IEnumerable<TaggedComponent> GetTagged<TTag>(Entity entity) where TTag : IComponent
+    public IEnumerable<TaggedComponent> GetTagged<TTag>(Entity entity) where TTag : IMessage<TTag>, new()
     {
         foreach (var typeName in TaggedTypeNames<TTag>())
         {
@@ -329,7 +330,7 @@ public class EntityQuery
     // ── Each — tuple iteration ──────────────────────────────
 
     public IEnumerable<(Entity Entity, T1 C1)> Each<T1>()
-        where T1 : IComponent
+        where T1 : IMessage<T1>, new()
     {
         foreach (var entity in _matchedEntities)
         {
@@ -339,8 +340,8 @@ public class EntityQuery
     }
 
     public IEnumerable<(Entity Entity, T1 C1, T2 C2)> Each<T1, T2>()
-        where T1 : IComponent
-        where T2 : IComponent
+        where T1 : IMessage<T1>, new()
+        where T2 : IMessage<T2>, new()
     {
         foreach (var entity in _matchedEntities)
         {
@@ -350,9 +351,9 @@ public class EntityQuery
     }
 
     public IEnumerable<(Entity Entity, T1 C1, T2 C2, T3 C3)> Each<T1, T2, T3>()
-        where T1 : IComponent
-        where T2 : IComponent
-        where T3 : IComponent
+        where T1 : IMessage<T1>, new()
+        where T2 : IMessage<T2>, new()
+        where T3 : IMessage<T3>, new()
     {
         foreach (var entity in _matchedEntities)
         {
@@ -362,10 +363,10 @@ public class EntityQuery
     }
 
     public IEnumerable<(Entity Entity, T1 C1, T2 C2, T3 C3, T4 C4)> Each<T1, T2, T3, T4>()
-        where T1 : IComponent
-        where T2 : IComponent
-        where T3 : IComponent
-        where T4 : IComponent
+        where T1 : IMessage<T1>, new()
+        where T2 : IMessage<T2>, new()
+        where T3 : IMessage<T3>, new()
+        where T4 : IMessage<T4>, new()
     {
         foreach (var entity in _matchedEntities)
         {
@@ -429,7 +430,7 @@ public class EntityQuery
 /// </summary>
 public readonly record struct TaggedComponent(string TypeName, byte[] Data)
 {
-    public T As<T>() where T : IComponent => MessagePackSerializer.Deserialize<T>(Data);
+    public T As<T>() where T : IMessage<T>, new() => ProtoCodec.Decode<T>(Data);
 
-    public bool Is<T>() where T : IComponent => TypeName == ComponentTypeId.Of<T>().TypeName;
+    public bool Is<T>() where T : IMessage<T>, new() => TypeName == ComponentTypeId.Of<T>().TypeName;
 }

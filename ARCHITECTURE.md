@@ -43,15 +43,16 @@ shards across instances automatically.
 
 ## Technology Stack
 
-| Layer              | Technology                          |
-| ------------------ | ----------------------------------- |
-| Language           | C# / .NET 9                         |
-| Messaging          | NATS (via `NATS.Net`)               |
-| Serialisation      | MessagePack (`MessagePack-CSharp`)  |
-| Editor Backend     | ASP.NET Core Minimal API            |
-| Editor Frontend    | React + TypeScript + Vite           |
-| Editor Comms       | WebSocket (backend ↔ frontend)      |
-| Dev Environment    | Dev Container (.NET 9 + Node 22)    |
+| Layer              | Technology                              |
+| ------------------ | --------------------------------------- |
+| Language           | C# / .NET 9                             |
+| Messaging          | NATS (via `NATS.Net`)                   |
+| Component schemas  | Protobuf, managed with `buf`            |
+| Component payloads | Protobuf binary                         |
+| Message envelopes  | MessagePack (`MessagePack-CSharp`)      |
+| Editor             | Node 22 + Hono + React + Vite           |
+| Editor Comms       | WebSocket (server ↔ browser)             |
+| Dev Environment    | Dev Container (.NET 9 + Node 22 + buf)  |
 
 ---
 
@@ -65,39 +66,71 @@ of their own — they are pure identifiers that components are attached to.
 ### Component
 
 A serialisable piece of data attached to an entity (e.g. `Transform3D`,
-`Velocity`). Components are serialized with MessagePack using the contractless
-resolver — no attributes are required on the types.
+`Velocity`). Components are **defined in Protobuf**, not in any host language.
+The `.proto` files live in `proto/`, are governed by a local `buf` module, and
+`buf generate` produces the C# and TypeScript types from them. There is no
+hand-written component type anywhere in the repository.
+
+```proto
+// proto/movement/v1/movement.proto
+package movement.v1;
+
+message Position {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+```
+
+Component **payloads** are protobuf binary. The message **envelopes** that carry
+them (`SystemDescriptor`, `ComponentShard`, `WatchData`, …) stay MessagePack —
+the coordinator treats payloads as opaque bytes, so the two encodings never meet.
+
+A component's identity is its **protobuf full name** — `movement.v1.Position`,
+`nova.v1.CellRef` — which is language-neutral, so a system written in any
+language addresses the same type as any other.
+
+Because an empty protobuf message encodes to zero bytes, a shard cannot use
+length to signal absence: a missing component is sent as `null`, and a
+zero-length payload is a genuine marker component.
 
 ### Component Type
 
 Component types are **entities themselves**. Every component type a system uses
 gets an entity allocated from the same counter as any other entity, carrying
-`ComponentInfo { TypeName }`. Everything else on a type entity is an ordinary
+`ecs.v1.ComponentInfo { type_name }` and `ecs.v1.ComponentSchema
+{ file_descriptor_set }`. Everything else on a type entity is an ordinary
 user-defined component.
 
-A component describes itself by buffering commands against its own type entity:
+`ComponentSchema` holds the **transitively closed `FileDescriptorSet`** for the
+type's own `.proto` file. That is what makes the type system self-describing: a
+tool can decode and render instances of a component type it was never compiled
+against, which is exactly what the editor does in the browser-facing layer.
 
-```csharp
-public readonly record struct Setting : IComponent;
-public readonly record struct Category(string Name) : IComponent;
+A component describes itself further through the `ecs.v1.description` message
+option, which carries an open set of `google.protobuf.Any` attachments:
 
-public record struct PidSettings(float Kp, float Ki, bool Enabled) : IComponent
-{
-    public static void Describe(EntityCommandBuffer commands, CommandTarget self)
-    {
-        commands.AddComponent(self, new Setting());
-        commands.AddComponent(self, new Category("Control"));
-    }
+```proto
+message PidSettings {
+  option (ecs.v1.description) = {
+    [type.googleapis.com/nova.v1.Setting] {}
+  };
+  option (ecs.v1.description) = {
+    [type.googleapis.com/nova.v1.Category] {name: "Control"}
+  };
+
+  float kp = 1;
+  float ki = 2;
+  bool enabled = 3;
 }
 ```
 
-`Describe` is a `static virtual` member of `IComponent` with an empty default, so
-implementing it is optional — a component that describes nothing still gets a type
-entity with its `ComponentInfo`. The Client SDK calls it once per component type a
-system uses, whether that use is a query or a command, and the resulting commands
-flow through the same command buffer, subjects and tick phase as any other
-structural change. `ComponentInfo` is itself an ordinary component, so there is no
-separate schema message, registration API or startup hook.
+Describing is optional — a component that describes nothing still gets a type
+entity with its `ComponentInfo` and `ComponentSchema`. The Client SDK reads the
+option once per component type a system uses, whether that use is a query or a
+command, and replays each attachment as an ordinary `AddComponent` command
+through the same command buffer, subjects and tick phase as any other structural
+change. There is no separate schema message, registration API or startup hook.
 
 Commands buffered during `OnAdd` are held until the system receives its first
 schedule, which proves the coordinator is running — otherwise they would be
@@ -107,38 +140,45 @@ Because the attachments are ordinary components on an ordinary entity, an open
 set of user-defined contracts is expressed without the engine knowing what any of
 them mean, and "which component types carry `Setting`" is an ordinary entity
 query. The description is world data, so it outlives the process that sent it.
+The attachments also travel inside the descriptor, so a consumer that only has
+the `FileDescriptorSet` sees them too.
 
 ### Entity References
 
 The engine has no relationship primitive. One entity points at another with an
-ordinary component holding an `Entity` field, governed by one naming rule:
+ordinary component holding an `ecs.v1.EntityId` field, governed by one naming
+rule:
 
-| Suffix | Field type | Means |
-| ------ | ---------- | ----- |
-| `Ref`  | `Entity`   | A reference to another entity **in this world**. |
-| `Id`   | `string`   | A foreign key into an **external system**. |
+| Suffix | Field type       | Means |
+| ------ | ---------------- | ----- |
+| `Ref`  | `ecs.v1.EntityId`| A reference to another entity **in this world**. |
+| `Id`   | `string`         | A foreign key into an **external system**. |
 
-```csharp
-public readonly record struct ParentRef(Entity Parent) : IComponent;      // in-world
-public record struct NovaControllerId(string Cell, string Controller);   // external
+```proto
+message ParentRef { ecs.v1.EntityId parent = 1; }                  // in-world
+message NovaControllerId { string cell = 1; string controller = 2; } // external
 ```
 
-A `Ref` component holds exactly one `Entity`, named for the role the target
-plays. Never a raw `ulong`, never a string. Where an entity holds two references
+A `Ref` component holds exactly one `EntityId`, named for the role the target
+plays. Never a raw `uint64`, never a string. Where an entity holds two references
 of the same kind, the role qualifies the prefix — `SourceControllerRef`,
 `TargetControllerRef`. Do not name a component `EntityRef`; untyped references
 are role-qualified too (`OwnerRef`, `TargetRef`).
 
-`ParentRef` is the one relation the engine defines, in `Engine.Core`. Domain
-relations belong in that domain's shared components assembly — component identity
-is the full type name, so the same relation declared twice in two namespaces
-silently never matches.
+`ParentRef` is the one relation the engine defines, in `ecs.v1`. Domain relations
+belong in that domain's own package — component identity is the full name, so the
+same relation declared twice in two packages silently never matches.
 
-`Entity` has a custom MessagePack formatter and serialises as a bare integer, so
-a reference is `{"Parent":7}` on the wire rather than a nested map. `Entity`,
-`ParentRef` and that formatter are authoring-side types and live in the client
-SDK only — the coordinator addresses entities by raw id and stores component
-payloads as opaque bytes, so it never resolves a reference.
+The message is called `EntityId` rather than `Entity` so it does not collide with
+the SDK's `Entity` struct, which stays the authoring type: it is a value type, so
+query iteration allocates nothing, and it converts implicitly to and from
+`ecs.v1.EntityId` so authoring code never names the generated type. Note that
+proto3 has no `required`, so a reference field is always presence-tracked; an
+unset reference reads as entity `0`.
+
+`Entity` and the conversions are authoring-side types and live in the client SDK
+only — the coordinator addresses entities by raw id and stores component payloads
+as opaque bytes, so it never resolves a reference.
 
 #### Dereferencing
 
@@ -288,21 +328,26 @@ ecs-engine/
 │       │   ├── Client.csproj
 │       │   └── SystemRunner.cs
 │       └── Client.Tests/
-├── editor/
-│   ├── frontend/               # React + Vite web app
-│   │   ├── package.json
-│   │   ├── vite.config.ts
-│   │   ├── index.html
-│   │   └── src/
-│   └── backend/                # ASP.NET Core Minimal API
-│       ├── EditorBackend.sln
-│       └── EditorBackend/
-│           ├── EditorBackend.csproj
-│           └── Program.cs
-├── examples/                   # Example components & systems
+├── proto/                      # Protobuf component schemas (a buf module)
+│   ├── ecs/v1/                 # Engine-generic: EntityId, ComponentInfo, ComponentSchema
+│   ├── movement/v1/
+│   ├── nova/v1/
+│   └── gen/                    # `buf generate` output, committed
+│       ├── csharp/             # Ecs.Protos.csproj, referenced by Engine and Client
+│       └── ts/                 # @ecs/protos npm package (browser and Node)
+├── editor/                     # One Node process: React UI + API + NATS bridge
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── index.html
+│   └── src/
+│       ├── client/             # React + Mantine
+│       └── server/             # Hono, MessagePack envelopes, schema registry
+├── examples/                   # Example systems
 ├── deployments/                # Target-specific installers
 │   └── nova/                   # Wandelbots NOVA app installer + NATS image
 ├── .devcontainer/              # Dev container (build environment)
+├── buf.yaml                    # buf workspace
+├── buf.gen.yaml                # Codegen: C# + TypeScript
 ├── ARCHITECTURE.md             # This file
 ├── AGENTS.md                   # AI agent guidelines
 └── README.md
@@ -380,9 +425,20 @@ them.
 
 ## Editor Integration
 
-The editor backend connects to NATS and bridges state to the React frontend
-over WebSocket using the coordinator's generic query/watch APIs. The coordinator
-has no knowledge of the editor — it only exposes generic NATS endpoints.
+The editor is a **single Node process**. It serves the React bundle, exposes the
+HTTP API and the WebSocket, and bridges NATS — all from one origin, so the browser
+needs no backend URL and there is nothing to inject at container start. The
+coordinator has no knowledge of the editor; it only exposes generic NATS
+endpoints.
+
+### Decoding components it was never built against
+
+The editor holds generated types only for `ecs.v1`. Everything else it learns at
+runtime: as component type entities arrive it absorbs their `ComponentSchema`
+descriptors into a `protobuf-es` file registry, then decodes each component
+payload to canonical protobuf JSON through that registry. A new component type
+therefore shows up in the editor with correct field names and types without the
+editor being rebuilt or knowing the domain.
 
 ### Query APIs (request/reply)
 
@@ -396,9 +452,10 @@ has no knowledge of the editor — it only exposes generic NATS endpoints.
 A generic editor for a user-defined contract such as `Setting` therefore
 needs no engine support:
 
-1. Query entities with `ComponentFilter = ["Nova.Components.Setting"]` → the type
+1. Query entities with `ComponentFilter = ["nova.v1.Setting"]` → the type
    entities carrying that component.
-2. Read their `ComponentInfo` → the component type names.
+2. Read their `ComponentInfo` → the component type names, and their
+   `ComponentSchema` → how to decode instances of them.
 3. Query entities with `AnyTypes = [<those type names>]` → the instances.
 4. Edit and write back via `engine.entity.component.add`, which upserts.
 
@@ -424,10 +481,23 @@ The editor uses this to provide:
 
 ## Serialisation
 
-All messages are serialised with **MessagePack** (`MessagePack-CSharp`) for
-compact binary encoding. NATS headers carry routing metadata (`msg-type`,
-`tick-id`, `instance-id`) so consumers can filter without deserialising the
-payload.
+Two encodings, cleanly separated:
+
+- **Component payloads are Protobuf.** Schemas live in `proto/`, so the same
+  component type is addressable from any language with a protobuf runtime. The
+  coordinator never decodes them — they are opaque bytes to it.
+- **Message envelopes are MessagePack** (`MessagePack-CSharp`, contractless
+  resolver). These are the coordinator's own protocol: `SystemDescriptor`,
+  `ComponentShard`, `WatchData` and friends.
+
+The contractless resolver writes C# property names verbatim, so envelope keys are
+`PascalCase`, `Guid` is its 36-character string and `ulong` is a uint64. The
+editor's TypeScript decoders depend on that; `Client.Tests` writes wire fixtures
+that the editor's Vitest suite reads back, so the two implementations cannot
+drift apart silently.
+
+NATS headers carry routing metadata (`msg-type`, `tick-id`, `instance-id`) so
+consumers can filter without deserialising the payload.
 
 ---
 
@@ -477,8 +547,7 @@ becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
 | App | Serves |
 | --- | --- |
 | `ecs-engine` | Coordinator |
-| `ecs-editor-api` | Editor backend, mounted at the public path NOVA injects as `BASE_PATH` |
-| `ecs-editor` | Editor frontend |
+| `ecs-editor` | Editor UI and API, mounted at the public path NOVA injects as `BASE_PATH` |
 | `ecs-<system>` | One app per system image |
 
 No broker is installed: NOVA runs its own NATS and injects the address as
@@ -503,15 +572,27 @@ answering — a one-shot process would reinstall the stack on every restart.
 2. **System = process** — Simple failure isolation, trivial horizontal scaling.
 3. **Coordinator as single authority** — Simplifies entity allocation and conflict resolution.
 4. **Staged scheduling** — Maximises parallelism while guaranteeing data-race freedom.
-5. **MessagePack over JSON/Protobuf** — Compact binary, no schema compilation.
-6. **Archetype-based storage** — Cache-friendly SoA layout, efficient batch shipping.
-7. **Fixed tick loop** — Deterministic simulation.
+5. **Protobuf for components** — One language-neutral definition, generated types for
+   every SDK, and descriptors the world can carry so tools decode types they were
+   never built against.
+6. **MessagePack for envelopes** — The coordinator's own protocol needs no schema
+   sharing and never inspects payloads, so a contractless encoding costs nothing.
+7. **Archetype-based storage** — Cache-friendly SoA layout, efficient batch shipping.
+8. **Fixed tick loop** — Deterministic simulation.
+9. **One editor process** — UI and API share an origin, so there is no CORS, no
+   backend URL to configure and one image to ship.
 
 ---
 
 ## Dependencies
 
-| Package          | Purpose                              |
-| ---------------- | ------------------------------------ |
-| `NATS.Net`       | NATS client for .NET                 |
-| `MessagePack`    | MessagePack serialisation            |
+| Package                    | Purpose                                        |
+| -------------------------- | ---------------------------------------------- |
+| `NATS.Net`                 | NATS client for .NET                           |
+| `MessagePack`              | Message envelope serialisation                 |
+| `Google.Protobuf`          | Component payload serialisation (C#)           |
+| `@bufbuild/buf`            | Protobuf linting, formatting and codegen       |
+| `@bufbuild/protobuf`       | Component payload serialisation (TypeScript)   |
+| `@nats-io/transport-node`  | NATS client for Node                           |
+| `@msgpack/msgpack`         | Message envelope decoding in the editor        |
+| `hono` / `@hono/node-server` | Editor HTTP, static serving and WebSocket    |

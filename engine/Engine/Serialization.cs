@@ -8,9 +8,9 @@ namespace Engine.Core;
 /// Call <see cref="Initialize"/> once at startup in every process.
 /// </summary>
 /// <remarks>
-/// No entity formatter is registered here: the coordinator only ever deserializes
-/// <see cref="ComponentInfo"/> and message envelopes, none of which hold an entity
-/// reference. Component payloads pass through as opaque bytes.
+/// MessagePack only ever sees message envelopes here. Component payloads are protobuf
+/// and pass through as opaque bytes; the only one the coordinator decodes is
+/// <c>ecs.v1.ComponentInfo</c>, which it parses with protobuf directly.
 /// </remarks>
 public static class Serialization
 {

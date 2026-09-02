@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package testing.v1;
+
+import "ecs/v1/component.proto";
+
+// Components used only by the SDK and coordinator test suites. TestDescribed
+// also exercises the ecs.v1.description option end to end.
+
+message TestSetting {}
+
+message TestCategory {
+  string name = 1;
+}
+
+message TestDescribed {
+  option (ecs.v1.description) = {
+    [type.googleapis.com/testing.v1.TestSetting]: {}
+  };
+  option (ecs.v1.description) = {
+    [type.googleapis.com/testing.v1.TestCategory]: {name: "Control"}
+  };
+
+  int32 value = 1;
+}
+
+message TestUndescribed {
+  int32 value = 1;
+}
+
+message TestPosition {
+  float x = 1;
+  float y = 2;
+}
+
+message TestVelocity {
+  float vx = 1;
+  float vy = 2;
+}
+
+message TestDisabled {}

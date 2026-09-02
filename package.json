@@ -1,0 +1,19 @@
+{
+  "name": "ecs-engine",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "proto/gen/ts",
+    "editor"
+  ],
+  "scripts": {
+    "proto:lint": "buf lint",
+    "proto:format": "buf format -w",
+    "proto:generate": "buf generate",
+    "build": "npm run build --workspace @ecs/protos && npm run build --workspace @ecs/editor",
+    "test": "npm run test --workspace @ecs/editor"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.50.0"
+  }
+}

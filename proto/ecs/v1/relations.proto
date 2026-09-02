@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package ecs.v1;
+
+import "ecs/v1/entity.proto";
+
+// Engine-generic parent/child relation. Domain relations belong in that
+// domain's own package.
+message ParentRef {
+  ecs.v1.EntityId parent = 1;
+}

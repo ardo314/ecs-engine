@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package movement.v1;
+
+message Position {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Velocity {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}

@@ -1,14 +1,14 @@
+using Ecs.V1;
 using Engine.Core;
 using Engine.Core.Messages;
 using Engine.Coordinator;
-using MessagePack;
 
 namespace Engine.Tests.Unit;
 
 [Trait("Category", "Unit")]
 public class ComponentTypeTests
 {
-    private const string PidSettings = "Nova.Components.PidSettings";
+    private const string PidSettings = "nova.v1.PidSettings";
 
     [Fact]
     public void GetOrCreateTypeEntity_CreatesEntityWithInfo()
@@ -16,8 +16,8 @@ public class ComponentTypeTests
         var world = new WorldState();
         var typeEntity = world.GetOrCreateTypeEntity(PidSettings);
 
-        var info = MessagePackSerializer.Deserialize<ComponentInfo>(
-            world.GetComponent(typeEntity, ComponentInfo.Type)!, Serialization.Options);
+        var info = ComponentInfo.Parser.ParseFrom(
+            world.GetComponent(typeEntity, ComponentTypes.Info)!);
 
         Assert.Equal(PidSettings, info.TypeName);
         Assert.Equal(typeEntity, world.FindTypeEntity(PidSettings));
@@ -49,10 +49,10 @@ public class ComponentTypeTests
     public void AttachedComponents_AreQueryableLikeAnyOther()
     {
         var world = new WorldState();
-        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "Nova.Components.Setting", [0xC0]);
-        world.GetOrCreateTypeEntity("Nova.Components.MotorTelemetry");
+        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "nova.v1.Setting", [0xC0]);
+        world.GetOrCreateTypeEntity("nova.v1.MotorTelemetry");
 
-        var settings = world.GetEntitiesWith(["Nova.Components.Setting"]);
+        var settings = world.GetEntitiesWith(["nova.v1.Setting"]);
 
         Assert.Single(settings);
         Assert.Equal(world.FindTypeEntity(PidSettings), settings[0]);
@@ -76,30 +76,30 @@ public class ComponentTypeTests
     public void GetTypesTaggedWith_ReturnsTypesCarryingTheTag()
     {
         var world = new WorldState();
-        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "Nova.Components.Setting", [0xC0]);
-        world.SetComponent(world.GetOrCreateTypeEntity("Nova.Components.GainSettings"), "Nova.Components.Setting", [0xC0]);
-        world.GetOrCreateTypeEntity("Nova.Components.MotorTelemetry");
+        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "nova.v1.Setting", [0xC0]);
+        world.SetComponent(world.GetOrCreateTypeEntity("nova.v1.GainSettings"), "nova.v1.Setting", [0xC0]);
+        world.GetOrCreateTypeEntity("nova.v1.MotorTelemetry");
 
-        var tagged = world.GetTypesTaggedWith("Nova.Components.Setting");
+        var tagged = world.GetTypesTaggedWith("nova.v1.Setting");
 
         Assert.Equal(2, tagged.Count);
         Assert.Contains(PidSettings, tagged);
-        Assert.Contains("Nova.Components.GainSettings", tagged);
+        Assert.Contains("nova.v1.GainSettings", tagged);
     }
 
     [Fact]
     public void GetEntitiesMatchingQueries_TaggedTypes_MatchesEntitiesCarryingATaggedComponent()
     {
         var world = new WorldState();
-        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "Nova.Components.Setting", [0xC0]);
+        world.SetComponent(world.GetOrCreateTypeEntity(PidSettings), "nova.v1.Setting", [0xC0]);
 
         var withSetting = world.AllocateEntity();
         world.SetComponent(withSetting, PidSettings, [1]);
         var withoutSetting = world.AllocateEntity();
-        world.SetComponent(withoutSetting, "Nova.Components.MotorTelemetry", [2]);
+        world.SetComponent(withoutSetting, "nova.v1.MotorTelemetry", [2]);
 
         var matches = world.GetEntitiesMatchingQueries(
-            [new QueryDescriptor { TaggedTypes = ["Nova.Components.Setting"] }]);
+            [new QueryDescriptor { TaggedTypes = ["nova.v1.Setting"] }]);
 
         Assert.Single(matches);
         Assert.Equal(withSetting, matches[0]);
@@ -113,7 +113,7 @@ public class ComponentTypeTests
         world.SetComponent(entity, PidSettings, [1]);
 
         var matches = world.GetEntitiesMatchingQueries(
-            [new QueryDescriptor { TaggedTypes = ["Nova.Components.Setting"] }]);
+            [new QueryDescriptor { TaggedTypes = ["nova.v1.Setting"] }]);
 
         Assert.Empty(matches);
     }

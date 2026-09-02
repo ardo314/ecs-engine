@@ -1,5 +1,6 @@
 using Engine.Core;
 using Engine.Core.Messages;
+using Google.Protobuf;
 using MessagePack;
 
 namespace Engine.Tests.Unit;
@@ -18,14 +19,14 @@ public class MessageSerializationTests
     {
         var request = new ComponentAddRequest
         {
-            Target = CommandTarget.OfComponentType("Nova.Components.PidSettings"),
-            ComponentType = ComponentInfo.Type,
+            Target = CommandTarget.OfComponentType("nova.v1.PidSettings"),
+            ComponentType = ComponentTypes.Info,
             Data = [1, 2, 3]
         };
 
         var result = RoundTrip(request);
 
-        Assert.Equal("Nova.Components.PidSettings", result.Target.ComponentType);
+        Assert.Equal("nova.v1.PidSettings", result.Target.ComponentType);
         Assert.Equal(0UL, result.Target.EntityId);
         Assert.Equal(request.ComponentType, result.ComponentType);
     }
@@ -51,20 +52,22 @@ public class MessageSerializationTests
     {
         var request = new ComponentRemoveRequest
         {
-            Target = CommandTarget.OfComponentType("Nova.Components.PidSettings"),
-            ComponentType = "Nova.Components.Setting"
+            Target = CommandTarget.OfComponentType("nova.v1.PidSettings"),
+            ComponentType = "nova.v1.Setting"
         };
 
         var result = RoundTrip(request);
 
-        Assert.Equal("Nova.Components.PidSettings", result.Target.ComponentType);
+        Assert.Equal("nova.v1.PidSettings", result.Target.ComponentType);
     }
 
     [Fact]
-    public void ComponentInfo_RoundTrips()
+    public void ComponentInfo_RoundTripsThroughProtobuf()
     {
-        var result = RoundTrip(new ComponentInfo("Nova.Components.PidSettings"));
+        var info = new Ecs.V1.ComponentInfo { TypeName = "nova.v1.PidSettings" };
 
-        Assert.Equal("Nova.Components.PidSettings", result.TypeName);
+        var result = Ecs.V1.ComponentInfo.Parser.ParseFrom(info.ToByteArray());
+
+        Assert.Equal("nova.v1.PidSettings", result.TypeName);
     }
 }

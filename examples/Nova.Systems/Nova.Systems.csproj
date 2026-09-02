@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\clients\csharp\Client\Client.csproj" />
-    <ProjectReference Include="..\Nova.Components\Nova.Components.csproj" />
   </ItemGroup>
 
 </Project>

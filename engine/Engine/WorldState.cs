@@ -1,6 +1,7 @@
+using Ecs.V1;
 using Engine.Core;
 using Engine.Core.Messages;
-using MessagePack;
+using Google.Protobuf;
 
 namespace Engine.Coordinator;
 
@@ -27,10 +28,9 @@ public class WorldState
     public void DestroyEntity(ulong entityId)
     {
         if (_components.TryGetValue(entityId, out var bag) &&
-            bag.TryGetValue(ComponentInfo.Type, out var info))
+            bag.TryGetValue(ComponentTypes.Info, out var info))
         {
-            var typeName = MessagePackSerializer
-                .Deserialize<ComponentInfo>(info, Serialization.Options).TypeName;
+            var typeName = ComponentInfo.Parser.ParseFrom(info).TypeName;
             _typeEntities.Remove(typeName);
         }
 
@@ -137,8 +137,8 @@ public class WorldState
 
         var id = AllocateEntity();
         _typeEntities[typeName] = id;
-        SetComponent(id, ComponentInfo.Type, MessagePackSerializer.Serialize(
-            new ComponentInfo(typeName), Serialization.Options));
+        SetComponent(id, ComponentTypes.Info,
+            new ComponentInfo { TypeName = typeName }.ToByteArray());
         return id;
     }
 

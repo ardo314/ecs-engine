@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package ecs.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MessageOptions {
+  // Components to attach to this component type's own type entity. The Client
+  // SDK replays each one as an ordinary AddComponent command the first time a
+  // system uses the type, so an open set of user-defined contracts (a `Setting`
+  // marker, a `Category`, ...) is expressed without the engine knowing what any
+  // of them mean.
+  repeated google.protobuf.Any description = 50000;
+}
+
+// Carried by every component type entity; names the type the entity stands for.
+message ComponentInfo {
+  string type_name = 1;
+}
+
+// The transitively closed FileDescriptorSet for a component type's own file,
+// attached to its type entity so tools can decode instances of a type they were
+// never compiled against.
+message ComponentSchema {
+  bytes file_descriptor_set = 1;
+}

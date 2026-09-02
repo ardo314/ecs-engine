@@ -17,10 +17,7 @@ public static class StackPlanner
         var apps = new List<AppManifest> { Engine(options) };
 
         if (options.InstallEditor)
-        {
-            apps.Add(EditorBackend(options));
-            apps.Add(EditorFrontend(options));
-        }
+            apps.Add(Editor(options));
 
         apps.AddRange(options.SystemImages.Select(system => System(options, system)));
         return apps;
@@ -40,37 +37,17 @@ public static class StackPlanner
         ]
     };
 
-    private static AppManifest EditorBackend(InstallerOptions options)
+    // One app: the editor serves its own UI and API from the same origin, so there is
+    // no backend URL to wire up.
+    private static AppManifest Editor(InstallerOptions options) => new()
     {
-        var name = $"{options.AppPrefix}-editor-api";
-        return new AppManifest
-        {
-            Name = name,
-            AppIcon = IconPath,
-            ContainerImage = Image(options, options.EditorBackendImage),
-            Port = HealthEndpoint.DefaultPort,
-            HealthPath = ProbePath,
-            Environment = [.. NatsUrl(options)]
-        };
-    }
-
-    private static AppManifest EditorFrontend(InstallerOptions options)
-    {
-        var name = $"{options.AppPrefix}-editor";
-        return new AppManifest
-        {
-            Name = name,
-            AppIcon = IconPath,
-            ContainerImage = Image(options, options.EditorFrontendImage),
-            Port = 80,
-            HealthPath = "config.js",
-            Environment =
-            [
-                // Path-only: config.ts resolves it against the page origin.
-                new EnvVar { Name = "EDITOR_BACKEND_URL", Value = PublicPath(options, $"{options.AppPrefix}-editor-api") }
-            ]
-        };
-    }
+        Name = $"{options.AppPrefix}-editor",
+        AppIcon = IconPath,
+        ContainerImage = Image(options, options.EditorImage),
+        Port = HealthEndpoint.DefaultPort,
+        HealthPath = ProbePath,
+        Environment = [.. NatsUrl(options)]
+    };
 
     private static AppManifest System(InstallerOptions options, SystemImage system) => new()
     {
@@ -85,9 +62,6 @@ public static class StackPlanner
     /// <summary>Omitted unless overridden, so containers fall back to NOVA's NATS_BROKER.</summary>
     private static EnvVar[] NatsUrl(InstallerOptions options) =>
         options.NatsUrl is null ? [] : [new EnvVar { Name = "NATS_URL", Value = options.NatsUrl }];
-
-    /// <summary>The URL prefix NOVA serves an app under.</summary>
-    private static string PublicPath(InstallerOptions options, string appName) => $"/{options.Cell}/{appName}";
 
     private static ContainerImage Image(InstallerOptions options, string image) => new()
     {

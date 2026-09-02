@@ -1,6 +1,6 @@
 using Client;
 using Engine.Core;
-using Nova.Components;
+using Nova.V1;
 
 namespace Nova.Systems;
 
@@ -53,11 +53,13 @@ public class SetControllerIOSystem : SystemBase
 
             foreach (var (entity, payload) in entries)
             {
-                var state = new IoOutputState(
-                    Io: payload.Io,
-                    ValueType: payload.ValueType,
-                    Value: payload.Value?.ToString() ?? "",
-                    Confirmed: success);
+                var state = new IoOutputState
+                {
+                    Io = payload.Io,
+                    ValueType = payload.ValueType,
+                    Value = payload.Value?.ToString() ?? "",
+                    Confirmed = success
+                };
                 _q.Set(entity, state);
             }
 

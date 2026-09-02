@@ -1,12 +1,16 @@
+using Ecs.V1;
+
 namespace Engine.Core;
 
 /// <summary>
-/// Identifies an entity as the representation of a component type. Component types
-/// are ordinary entities, so the type system is queryable through the same endpoints
-/// as any other world data.
+/// Type names of the components the engine itself knows about. Everything else on a
+/// component type entity is ordinary user-defined data.
 /// </summary>
-public readonly record struct ComponentInfo(string TypeName) : IComponent
+public static class ComponentTypes
 {
-    /// <summary>The component type name this component is stored under.</summary>
-    public static string Type { get; } = ComponentTypeId.Of<ComponentInfo>().TypeName;
+    /// <summary>Identifies an entity as the representation of a component type.</summary>
+    public static string Info { get; } = ComponentTypeId.Of<ComponentInfo>().TypeName;
+
+    /// <summary>Carries a component type's own protobuf descriptors.</summary>
+    public static string Schema { get; } = ComponentTypeId.Of<ComponentSchema>().TypeName;
 }

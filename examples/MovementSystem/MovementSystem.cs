@@ -1,6 +1,6 @@
 using Client;
 using Engine.Core;
-using Examples.Components;
+using Movement.V1;
 
 namespace Examples;
 
@@ -22,10 +22,12 @@ public class MovementSystem : SystemBase
         {
             var pos = _q.Get<Position>(entity);
             var vel = _q.Get<Velocity>(entity);
-            _q.Set(entity, new Position(
-                pos.X + vel.X * DeltaTime,
-                pos.Y + vel.Y * DeltaTime,
-                pos.Z + vel.Z * DeltaTime));
+            _q.Set(entity, new Position
+            {
+                X = pos.X + vel.X * DeltaTime,
+                Y = pos.Y + vel.Y * DeltaTime,
+                Z = pos.Z + vel.Z * DeltaTime
+            });
         }
 
         _tickCount++;

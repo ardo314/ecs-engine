@@ -1,5 +1,6 @@
+using Ecs.V1;
 using Engine.Core.Messages;
-using MessagePack;
+using Google.Protobuf;
 
 namespace Engine.Core;
 
@@ -27,15 +28,14 @@ public class EntityCommandBuffer
     /// <summary>
     /// Buffers a request to create a new entity with the given components.
     /// </summary>
-    public void CreateEntity(params IComponent[] components)
+    public void CreateEntity(params IMessage[] components)
     {
         var types = new string[components.Length];
         var data = new byte[components.Length][];
         for (var i = 0; i < components.Length; i++)
         {
-            var type = components[i].GetType();
-            types[i] = type.FullName ?? type.Name;
-            data[i] = MessagePackSerializer.Serialize(type, components[i]);
+            types[i] = components[i].Descriptor.FullName;
+            data[i] = components[i].ToByteArray();
             Announce(types[i]);
         }
         _spawns.Add(new EntitySpawnRequest { ComponentTypes = types, ComponentData = data });
@@ -52,21 +52,36 @@ public class EntityCommandBuffer
     /// <summary>
     /// Buffers a request to add a component to the target.
     /// </summary>
-    public void AddComponent<T>(CommandTarget target, T component) where T : IComponent
+    public void AddComponent<T>(CommandTarget target, T component) where T : IMessage<T>, new()
     {
         Describe<T>();
         _adds.Add(new ComponentAddRequest
         {
             Target = target,
             ComponentType = ComponentTypeId.Of<T>().TypeName,
-            Data = MessagePackSerializer.Serialize(component)
+            Data = component.ToByteArray()
+        });
+    }
+
+    /// <summary>
+    /// Buffers a request to add a component known only by name — the form a component
+    /// type's own <c>ecs.v1.description</c> attachments arrive in.
+    /// </summary>
+    internal void AddComponentRaw(CommandTarget target, string componentType, byte[] data)
+    {
+        Announce(componentType);
+        _adds.Add(new ComponentAddRequest
+        {
+            Target = target,
+            ComponentType = componentType,
+            Data = data
         });
     }
 
     /// <summary>
     /// Buffers a request to remove a component from the target.
     /// </summary>
-    public void RemoveComponent<T>(CommandTarget target) where T : IComponent
+    public void RemoveComponent<T>(CommandTarget target) where T : IMessage<T>, new()
     {
         Describe<T>();
         _removes.Add(new ComponentRemoveRequest
@@ -79,7 +94,7 @@ public class EntityCommandBuffer
     /// <summary>
     /// Buffers the component type's own description, once per buffer.
     /// </summary>
-    internal void Describe<T>() where T : IComponent
+    internal void Describe<T>() where T : IMessage<T>, new()
     {
         if (_described.Add(ComponentTypeId.Of<T>().TypeName))
             Description<T>.Apply(this);
@@ -95,8 +110,8 @@ public class EntityCommandBuffer
         _adds.Add(new ComponentAddRequest
         {
             Target = CommandTarget.OfComponentType(typeName),
-            ComponentType = ComponentInfo.Type,
-            Data = MessagePackSerializer.Serialize(new ComponentInfo(typeName))
+            ComponentType = ComponentTypes.Info,
+            Data = new ComponentInfo { TypeName = typeName }.ToByteArray()
         });
     }
 

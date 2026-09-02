@@ -1,50 +1,43 @@
+using Ecs.V1;
 using Engine.Core;
-using MessagePack;
+using Google.Protobuf;
 
 namespace Client.Tests.Unit;
 
 /// <summary>
-/// The entity formatter only matters where components are actually deserialized —
-/// the client SDK. The coordinator passes component payloads through as opaque bytes.
+/// Reference components hold an <c>ecs.v1.Entity</c> message on the wire. The SDK's
+/// <see cref="Entity"/> struct converts to and from it so authoring code never sees
+/// the generated type.
 /// </summary>
 [Trait("Category", "Unit")]
 public class EntityReferenceSerializationTests
 {
-    public EntityReferenceSerializationTests() => Serialization.Initialize();
-
-    private static T RoundTrip<T>(T value) =>
-        MessagePackSerializer.Deserialize<T>(
-            MessagePackSerializer.Serialize(value, Serialization.Options), Serialization.Options);
-
-    [Fact]
-    public void Entity_SerializesAsBareInteger()
-    {
-        var json = MessagePackSerializer.ConvertToJson(
-            MessagePackSerializer.Serialize(new Entity(42), Serialization.Options));
-
-        Assert.Equal("42", json);
-    }
-
-    [Fact]
-    public void ReferenceComponent_SerializesEntityFieldAsBareInteger()
-    {
-        var json = MessagePackSerializer.ConvertToJson(
-            MessagePackSerializer.Serialize(new ParentRef(new Entity(7)), Serialization.Options));
-
-        Assert.Equal("{\"Parent\":7}", json);
-    }
-
     [Fact]
     public void ReferenceComponent_RoundTrips()
     {
-        var result = RoundTrip(new ParentRef(new Entity(9)));
+        var reference = new ParentRef { Parent = new Entity(9) };
 
-        Assert.Equal(new Entity(9), result.Parent);
+        var result = ParentRef.Parser.ParseFrom(reference.ToByteArray());
+
+        Assert.Equal(new Entity(9), (Entity)result.Parent);
     }
 
     [Fact]
-    public void Entity_RoundTripsZero()
+    public void UnsetReference_ReadsAsEntityZero()
     {
-        Assert.Equal(new Entity(0), RoundTrip(new Entity(0)));
+        var result = ParentRef.Parser.ParseFrom(new ParentRef().ToByteArray());
+
+        Assert.Null(result.Parent);
+        Assert.Equal(new Entity(0), (Entity)result.Parent);
+    }
+
+    [Fact]
+    public void EntityZero_RoundTrips()
+    {
+        var reference = new ParentRef { Parent = new Entity(0) };
+
+        var result = ParentRef.Parser.ParseFrom(reference.ToByteArray());
+
+        Assert.Equal(new Entity(0), (Entity)result.Parent);
     }
 }

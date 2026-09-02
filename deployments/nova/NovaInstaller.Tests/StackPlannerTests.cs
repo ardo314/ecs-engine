@@ -16,7 +16,7 @@ public class StackPlannerTests
         var apps = StackPlanner.Plan(Options());
 
         Assert.Equal(
-            ["ecs-engine", "ecs-editor-api", "ecs-editor"],
+            ["ecs-engine", "ecs-editor"],
             apps.Select(a => a.Name));
     }
 
@@ -74,7 +74,7 @@ public class StackPlannerTests
             ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0"
         }));
 
-        foreach (var app in apps.Where(a => a.Name != "ecs-editor"))
+        foreach (var app in apps)
         {
             Assert.Equal(HealthEndpoint.DefaultPort, app.Port);
             Assert.Equal("health", app.HealthPath);
@@ -118,26 +118,22 @@ public class StackPlannerTests
             ["ECS_NATS_URL"] = "nats://platform-nats:4222"
         }));
 
-        // The frontend is a browser app and never talks to NATS.
-        string[] consumers = ["ecs-engine", "ecs-editor-api", "ecs-movement-system"];
+        string[] consumers = ["ecs-engine", "ecs-editor", "ecs-movement-system"];
 
         foreach (var name in consumers)
         {
             var app = apps.Single(a => a.Name == name);
             Assert.Equal("nats://platform-nats:4222", app.Environment!.Single(e => e.Name == "NATS_URL").Value);
         }
-
-        var frontend = apps.Single(a => a.Name == "ecs-editor");
-        Assert.DoesNotContain(frontend.Environment!, e => e.Name == "NATS_URL");
     }
 
     [Fact]
-    public void Plan_WiresEditorFrontendToBackendPublicPath()
+    public void Plan_ServesTheEditorUiAndApiFromOneApp()
     {
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string> { ["NOVA_CELL"] = "cell" }));
 
-        var frontend = apps.Single(a => a.Name == "ecs-editor");
-        Assert.Equal("/cell/ecs-editor-api", frontend.Environment!.Single(e => e.Name == "EDITOR_BACKEND_URL").Value);
+        var editor = apps.Single(a => a.Name.StartsWith("ecs-editor"));
+        Assert.DoesNotContain(editor.Environment!, e => e.Name == "EDITOR_BACKEND_URL");
     }
 
     [Fact]

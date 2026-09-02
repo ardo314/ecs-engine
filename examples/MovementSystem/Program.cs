@@ -1,6 +1,6 @@
 using Client;
 using Examples;
-using Examples.Components;
+using Movement.V1;
 using NATS.Client.Core;
 
 await using var nats = new NatsConnection(NatsConfig.CreateOpts());
@@ -13,7 +13,9 @@ var entityCount = int.TryParse(
     Environment.GetEnvironmentVariable("SEED_ENTITIES"), out var ec) ? ec : 10;
 
 for (var i = 0; i < entityCount; i++)
-    world.Commands.CreateEntity(new Position(0f, 0f, 0f), new Velocity(1f, 0.5f, 0.25f));
+    world.Commands.CreateEntity(
+        new Position { X = 0f, Y = 0f, Z = 0f },
+        new Velocity { X = 1f, Y = 0.5f, Z = 0.25f });
 
 await world.FlushAsync();
 Console.WriteLine($"[Movement] Seeded {entityCount} entities.");

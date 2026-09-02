@@ -28,8 +28,7 @@ public sealed class InstallerOptions
     public required string Cell { get; init; }
     public required string AppPrefix { get; init; }
     public required string EngineImage { get; init; }
-    public required string EditorBackendImage { get; init; }
-    public required string EditorFrontendImage { get; init; }
+    public required string EditorImage { get; init; }
     public required IReadOnlyList<SystemImage> SystemImages { get; init; }
     public required bool InstallEditor { get; init; }
 
@@ -59,8 +58,7 @@ public sealed class InstallerOptions
             Cell = Value(read, "NOVA_CELL") ?? Value(read, "CELL_NAME") ?? "cell",
             AppPrefix = prefix,
             EngineImage = Value(read, "ECS_ENGINE_IMAGE") ?? $"{registry}/engine:{tag}",
-            EditorBackendImage = Value(read, "ECS_EDITOR_BACKEND_IMAGE") ?? $"{registry}/editor-backend:{tag}",
-            EditorFrontendImage = Value(read, "ECS_EDITOR_FRONTEND_IMAGE") ?? $"{registry}/editor-frontend:{tag}",
+            EditorImage = Value(read, "ECS_EDITOR_IMAGE") ?? $"{registry}/editor:{tag}",
             SystemImages = ParseSystemImages(Value(read, "ECS_SYSTEM_IMAGES")),
             InstallEditor = ParseBool(Value(read, "ECS_INSTALL_EDITOR"), true),
             NatsUrl = Value(read, "ECS_NATS_URL"),

@@ -15,8 +15,7 @@ public class InstallerOptionsTests
         });
 
         Assert.Equal("registry.example.com/ecs/engine:1.2.3", options.EngineImage);
-        Assert.Equal("registry.example.com/ecs/editor-backend:1.2.3", options.EditorBackendImage);
-        Assert.Equal("registry.example.com/ecs/editor-frontend:1.2.3", options.EditorFrontendImage);
+        Assert.Equal("registry.example.com/ecs/editor:1.2.3", options.EditorImage);
     }
 
     [Fact]
@@ -25,8 +24,7 @@ public class InstallerOptionsTests
         var options = Options([]);
 
         Assert.Equal($"{InstallerOptions.DefaultRegistry}/engine:{InstallerOptions.DefaultImageTag}", options.EngineImage);
-        Assert.Equal($"{InstallerOptions.DefaultRegistry}/editor-backend:{InstallerOptions.DefaultImageTag}", options.EditorBackendImage);
-        Assert.Equal($"{InstallerOptions.DefaultRegistry}/editor-frontend:{InstallerOptions.DefaultImageTag}", options.EditorFrontendImage);
+        Assert.Equal($"{InstallerOptions.DefaultRegistry}/editor:{InstallerOptions.DefaultImageTag}", options.EditorImage);
     }
 
     [Fact]
