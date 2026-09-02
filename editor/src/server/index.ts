@@ -1,7 +1,7 @@
-import { serve } from "@hono/node-server";
+import { serve, upgradeWebSocket } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
+import { WebSocketServer } from "ws";
 import { Broadcaster, createApp, EngineBridge } from "./app.js";
 import { connectToNats } from "./nats.js";
 
@@ -11,9 +11,6 @@ const basePath = normalizeBasePath(process.env.BASE_PATH);
 const nats = await connectToNats();
 const broadcaster = new Broadcaster();
 
-const root = new Hono();
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app: root });
-
 const app = createApp({ nats, broadcaster, upgradeWebSocket });
 
 // The built client is served from the same origin as the API, so the browser needs
@@ -21,12 +18,12 @@ const app = createApp({ nats, broadcaster, upgradeWebSocket });
 app.use("/assets/*", serveStatic({ root: "./dist/client" }));
 app.get("*", serveStatic({ path: "./dist/client/index.html" }));
 
-root.route(basePath, app);
+const root = new Hono().route(basePath, app);
 
-const server = serve({ fetch: root.fetch, port }, (info) =>
-  console.log(`[Editor] Listening on http://localhost:${info.port}${basePath}`),
+const server = serve(
+  { fetch: root.fetch, port, websocket: { server: new WebSocketServer({ noServer: true }) } },
+  (info) => console.log(`[Editor] Listening on http://localhost:${info.port}${basePath}`),
 );
-injectWebSocket(server);
 
 const shutdown = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
