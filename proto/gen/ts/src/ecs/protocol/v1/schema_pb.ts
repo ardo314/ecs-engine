@@ -15,21 +15,15 @@ export const file_ecs_protocol_v1_schema: GenFile = /*@__PURE__*/
 /**
  * Identity of a component type as it travels on the wire, before the coordinator
  * has bound it to a dense id.
- * 
- * `schema_hash` is the exact identity of the type's structure. It is a truncation
- * of SHA-256 over a canonical textual rendering of the message and every message
- * and enum it transitively references, so any language that can read a
- * FileDescriptorSet can reproduce it. The rendering is:
- * 
- *   message <full_name>\n
- *   field <number> <name> <label> <type> [<type_name>]\n   (fields ascending by number)
- *   oneof <index> <name>\n                                 (oneofs ascending by index)
- *   enum <full_name>\n
- *   value <number> <name>\n                                (values ascending by number)
- * 
- * Referenced types are emitted after the root, once each, ordered by full name.
- * The first eight bytes of the digest are read big-endian.
- * 
+ *
+ * `schema_hash` is the exact identity of the type's structure: a truncation of
+ * SHA-256 over a canonical textual rendering of the message and everything it
+ * transitively references. The rendering is defined over FileDescriptorProto, not
+ * over any runtime's reflection API, so every language can reproduce it.
+ *
+ * The algorithm is specified in protocol/SPEC.md §1 and pinned by the vectors in
+ * protocol/conformance/. It is not restated here — one normative source only.
+ *
  * The coordinator requires an exact match. Compatible schema evolution is
  * deliberately not modelled — a changed schema is a different type until there is
  * a concrete need for anything cleverer.

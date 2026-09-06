@@ -4,14 +4,15 @@
   "type": "module",
   "workspaces": [
     "proto/gen/ts",
+    "protocol/ts",
     "editor"
   ],
   "scripts": {
     "proto:lint": "buf lint",
     "proto:format": "buf format -w",
     "proto:generate": "buf generate",
-    "build": "npm run build --workspace @ecs/protos && npm run build --workspace @ecs/editor",
-    "test": "npm run test --workspace @ecs/editor"
+    "build": "npm run build --workspace @ecs/protos && npm run build --workspace @ecs/protocol && npm run build --workspace @ecs/editor",
+    "test": "npm run test --workspace @ecs/protocol && npm run test --workspace @ecs/editor"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.50.0"

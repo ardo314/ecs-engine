@@ -3,14 +3,13 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { NatsConnection } from "@nats-io/nats-core";
+import { Subjects } from "@ecs/protocol";
 import {
   CommandBatchSchema,
   type StructuralCommand,
 } from "@ecs/protos/ecs/protocol/v1/tick_pb.js";
 import { Broadcaster } from "./broadcaster.js";
 import { EngineBridge } from "./bridge.js";
-
-const SUBJECT_COMMAND = "engine.world.command";
 
 export interface AppDeps {
   nats: NatsConnection;
@@ -29,7 +28,7 @@ export function createApp({ nats, broadcaster, bridge, upgradeWebSocket }: AppDe
    */
   const submit = async (...commands: StructuralCommand[]) => {
     const batch = create(CommandBatchSchema, { commands });
-    await nats.request(SUBJECT_COMMAND, toBinary(CommandBatchSchema, batch), { timeout: 5000 });
+    await nats.request(Subjects.worldCommand, toBinary(CommandBatchSchema, batch), { timeout: 5000 });
   };
 
   app.use("/api/*", cors());

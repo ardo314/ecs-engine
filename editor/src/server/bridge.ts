@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import type { NatsConnection } from "@nats-io/nats-core";
+import { Subjects } from "@ecs/protocol";
 import {
   WatchCancelSchema,
   WatchDataSchema,
@@ -12,8 +13,6 @@ import {
 import type { Broadcaster } from "./broadcaster.js";
 import { SchemaRegistry } from "./schemas.js";
 
-const SUBJECT_SUBSCRIBE = "engine.world.watch.subscribe";
-const SUBJECT_CANCEL = "engine.world.watch.cancel";
 const RETRY_DELAY_MS = 2000;
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
@@ -59,7 +58,7 @@ export class EngineBridge {
     } finally {
       try {
         this.nats.publish(
-          SUBJECT_CANCEL,
+          Subjects.watchCancel,
           toBinary(WatchCancelSchema, { $typeName: WatchCancelSchema.typeName, watchId: this.watchId }),
         );
         console.log("[EditorBridge] Watch cancelled.");
@@ -73,7 +72,7 @@ export class EngineBridge {
     while (!signal.aborted) {
       try {
         const reply = await this.nats.request(
-          SUBJECT_SUBSCRIBE,
+          Subjects.watchSubscribe,
           toBinary(WatchRequestSchema, {
             $typeName: WatchRequestSchema.typeName,
             watchId: this.watchId,

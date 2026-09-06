@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "algorithm": "sha256-truncated-64-be",
+  "spec": "protocol/SPEC.md#1-schema-hash",
+  "cases": [
+    {
+      "logicalName": "ecs.protocol.v1.ComponentBatch",
+      "schemaHash": "0x1f80662d8b36f574",
+      "canonical": "message ecs.protocol.v1.ComponentBatch\nfield 1 type_id singular TYPE_UINT32\nfield 2 encoding singular TYPE_ENUM ecs.protocol.v1.BatchEncoding\nfield 3 entities repeated TYPE_UINT64\nfield 4 rows repeated TYPE_BYTES\nfield 5 present repeated TYPE_BOOL\nfield 6 opaque singular TYPE_BYTES\nenum ecs.protocol.v1.BatchEncoding\nvalue 0 BATCH_ENCODING_UNSPECIFIED\nvalue 1 BATCH_ENCODING_PROTOBUF\nvalue 2 BATCH_ENCODING_ARROW\nvalue 3 BATCH_ENCODING_SHARED_MEMORY\n"
+    },
+    {
+      "logicalName": "ecs.protocol.v1.StructuralCommand",
+      "schemaHash": "0x491a45cb4032cd3f",
+      "canonical": "message ecs.protocol.v1.StructuralCommand\nfield 1 spawn singular TYPE_MESSAGE ecs.protocol.v1.SpawnEntity\nfield 2 despawn singular TYPE_MESSAGE ecs.protocol.v1.DespawnEntity\nfield 3 add singular TYPE_MESSAGE ecs.protocol.v1.AddComponent\nfield 4 remove singular TYPE_MESSAGE ecs.protocol.v1.RemoveComponent\noneof 0 command\nmessage ecs.protocol.v1.AddComponent\nfield 1 target singular TYPE_MESSAGE ecs.protocol.v1.CommandTarget\nfield 2 component singular TYPE_MESSAGE ecs.protocol.v1.ComponentValue\nmessage ecs.protocol.v1.CommandTarget\nfield 1 entity singular TYPE_UINT64\nfield 2 component_type singular TYPE_STRING\noneof 0 target\nmessage ecs.protocol.v1.ComponentTypeRef\nfield 1 logical_name singular TYPE_STRING\nfield 2 schema_hash singular TYPE_FIXED64\nmessage ecs.protocol.v1.ComponentValue\nfield 1 type singular TYPE_MESSAGE ecs.protocol.v1.ComponentTypeRef\nfield 2 payload singular TYPE_BYTES\nmessage ecs.protocol.v1.DespawnEntity\nfield 1 entity singular TYPE_UINT64\nmessage ecs.protocol.v1.RemoveComponent\nfield 1 target singular TYPE_MESSAGE ecs.protocol.v1.CommandTarget\nfield 2 type singular TYPE_MESSAGE ecs.protocol.v1.ComponentTypeRef\nmessage ecs.protocol.v1.SpawnEntity\nfield 1 components repeated TYPE_MESSAGE ecs.protocol.v1.ComponentValue\n"
+    },
+    {
+      "logicalName": "ecs.v1.ComponentInfo",
+      "schemaHash": "0x7b307376be7bb74c",
+      "canonical": "message ecs.v1.ComponentInfo\nfield 1 type_name singular TYPE_STRING\n"
+    },
+    {
+      "logicalName": "ecs.v1.ComponentSchema",
+      "schemaHash": "0xb2591475f80578e9",
+      "canonical": "message ecs.v1.ComponentSchema\nfield 1 file_descriptor_set singular TYPE_BYTES\nfield 2 schema_hash singular TYPE_FIXED64\nfield 3 type_id singular TYPE_UINT32\n"
+    },
+    {
+      "logicalName": "ecs.v1.ParentRef",
+      "schemaHash": "0xe026903ae0d15eb3",
+      "canonical": "message ecs.v1.ParentRef\nfield 1 parent singular TYPE_MESSAGE ecs.v1.EntityId\nmessage ecs.v1.EntityId\nfield 1 id singular TYPE_UINT64\n"
+    },
+    {
+      "logicalName": "movement.v1.Position",
+      "schemaHash": "0xa4106d65568e9551",
+      "canonical": "message movement.v1.Position\nfield 1 x singular TYPE_FLOAT\nfield 2 y singular TYPE_FLOAT\nfield 3 z singular TYPE_FLOAT\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceEnums",
+      "schemaHash": "0xb0e73ccc7c1e2a57",
+      "canonical": "message testing.v1.ConformanceEnums\nfield 1 colour singular TYPE_ENUM testing.v1.ConformanceColour\nfield 2 palette repeated TYPE_ENUM testing.v1.ConformanceColour\nenum testing.v1.ConformanceColour\nvalue 0 CONFORMANCE_COLOUR_UNSPECIFIED\nvalue 3 CONFORMANCE_COLOUR_GREEN\nvalue 7 CONFORMANCE_COLOUR_RED\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceLeaf",
+      "schemaHash": "0x0e666588f743203d",
+      "canonical": "message testing.v1.ConformanceLeaf\nfield 1 blob singular TYPE_BYTES\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceLeafTwin",
+      "schemaHash": "0xe9f6570372ddd89d",
+      "canonical": "message testing.v1.ConformanceLeafTwin\nfield 1 blob singular TYPE_BYTES\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceMaps",
+      "schemaHash": "0x92fa678116110738",
+      "canonical": "message testing.v1.ConformanceMaps\nfield 1 counts repeated TYPE_MESSAGE testing.v1.ConformanceMaps.CountsEntry\nfield 2 leaves repeated TYPE_MESSAGE testing.v1.ConformanceMaps.LeavesEntry\nmessage testing.v1.ConformanceLeaf\nfield 1 blob singular TYPE_BYTES\nmessage testing.v1.ConformanceMaps.CountsEntry\nfield 1 key singular TYPE_STRING\nfield 2 value singular TYPE_INT32\nmessage testing.v1.ConformanceMaps.LeavesEntry\nfield 1 key singular TYPE_INT64\nfield 2 value singular TYPE_MESSAGE testing.v1.ConformanceLeaf\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceOneof",
+      "schemaHash": "0x1afd04b45d357096",
+      "canonical": "message testing.v1.ConformanceOneof\nfield 1 number singular TYPE_INT32\nfield 2 text singular TYPE_STRING\nfield 3 leaf singular TYPE_MESSAGE testing.v1.ConformanceLeaf\nfield 4 outside singular TYPE_STRING\noneof 0 choice\nmessage testing.v1.ConformanceLeaf\nfield 1 blob singular TYPE_BYTES\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceOrdering",
+      "schemaHash": "0x281312614617c217",
+      "canonical": "message testing.v1.ConformanceOrdering\nfield 1 a singular TYPE_STRING\nfield 20 b singular TYPE_STRING\nfield 30 c singular TYPE_STRING\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformancePresence",
+      "schemaHash": "0x95abd906d6bef16e",
+      "canonical": "message testing.v1.ConformancePresence\nfield 1 implicit_field singular TYPE_STRING\nfield 2 explicit_field optional TYPE_STRING\nfield 3 repeated_field repeated TYPE_STRING\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceRecursive",
+      "schemaHash": "0x253a5fedba5d888e",
+      "canonical": "message testing.v1.ConformanceRecursive\nfield 1 next singular TYPE_MESSAGE testing.v1.ConformanceRecursive\nfield 2 children repeated TYPE_MESSAGE testing.v1.ConformanceRecursive\nfield 3 inner singular TYPE_MESSAGE testing.v1.ConformanceRecursive.Inner\nmessage testing.v1.ConformanceRecursive.Inner\nfield 1 back singular TYPE_MESSAGE testing.v1.ConformanceRecursive\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceScalars",
+      "schemaHash": "0xbc0e606171d2d1ec",
+      "canonical": "message testing.v1.ConformanceScalars\nfield 1 f_double singular TYPE_DOUBLE\nfield 2 f_float singular TYPE_FLOAT\nfield 3 f_int64 singular TYPE_INT64\nfield 4 f_uint64 singular TYPE_UINT64\nfield 5 f_int32 singular TYPE_INT32\nfield 6 f_fixed64 singular TYPE_FIXED64\nfield 7 f_fixed32 singular TYPE_FIXED32\nfield 8 f_bool singular TYPE_BOOL\nfield 9 f_string singular TYPE_STRING\nfield 12 f_bytes singular TYPE_BYTES\nfield 13 f_uint32 singular TYPE_UINT32\nfield 15 f_sfixed32 singular TYPE_SFIXED32\nfield 16 f_sfixed64 singular TYPE_SFIXED64\nfield 17 f_sint32 singular TYPE_SINT32\nfield 18 f_sint64 singular TYPE_SINT64\n"
+    },
+    {
+      "logicalName": "testing.v1.ConformanceWellKnown",
+      "schemaHash": "0x35905fb4211da454",
+      "canonical": "message testing.v1.ConformanceWellKnown\nfield 1 settings singular TYPE_MESSAGE google.protobuf.Struct\nfield 2 at singular TYPE_MESSAGE google.protobuf.Timestamp\nmessage google.protobuf.ListValue\nfield 1 values repeated TYPE_MESSAGE google.protobuf.Value\nmessage google.protobuf.Struct\nfield 1 fields repeated TYPE_MESSAGE google.protobuf.Struct.FieldsEntry\nmessage google.protobuf.Struct.FieldsEntry\nfield 1 key singular TYPE_STRING\nfield 2 value singular TYPE_MESSAGE google.protobuf.Value\nmessage google.protobuf.Timestamp\nfield 1 seconds singular TYPE_INT64\nfield 2 nanos singular TYPE_INT32\nmessage google.protobuf.Value\nfield 1 null_value singular TYPE_ENUM google.protobuf.NullValue\nfield 2 number_value singular TYPE_DOUBLE\nfield 3 string_value singular TYPE_STRING\nfield 4 bool_value singular TYPE_BOOL\nfield 5 struct_value singular TYPE_MESSAGE google.protobuf.Struct\nfield 6 list_value singular TYPE_MESSAGE google.protobuf.ListValue\noneof 0 kind\nenum google.protobuf.NullValue\nvalue 0 NULL_VALUE\n"
+    }
+  ]
+}

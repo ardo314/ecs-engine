@@ -65,7 +65,7 @@ export const ComponentBatchSchema: GenMessage<ComponentBatch> = /*@__PURE__*/
 
 /**
  * The coordinator handing a system a tick-scoped slice of the world under a lease.
- * 
+ *
  * The lease is the distributed equivalent of an ECS borrow check. A result is
  * accepted only while the lease is live, and only for the tick, the entities and
  * the writable component types named here — so a slow worker cannot land tick

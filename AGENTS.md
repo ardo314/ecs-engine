@@ -41,7 +41,10 @@ ecs-engine/
 │       ├── csharp/              # Ecs.Protos.csproj
 │       └── ts/                  # @ecs/protos npm package
 ├── protocol/                    # Hand-written companion to the generated code
-│   └── csharp/Ecs.Protocol/     # SchemaHash, ComponentBatchCodec, PayloadValidator, Subjects
+│   ├── SPEC.md                  # Normative wire contract (hashing, batches, subjects)
+│   ├── conformance/             # Vectors every implementation must reproduce
+│   ├── csharp/Ecs.Protocol/     # SchemaHash, ComponentBatchCodec, PayloadValidator, Subjects
+│   └── ts/                      # @ecs/protocol
 ├── engine/                      # C# solution — Coordinator
 │   ├── Engine.sln
 │   └── Engine/                  # Coordinator (self-contained, includes core types)
@@ -113,14 +116,22 @@ ecs-engine/
 
 ### Protocol runtime
 
-- `protocol/csharp/Ecs.Protocol` holds the parts of the contract that are
-  algorithms: `SchemaHash`, `Descriptors`, `PayloadValidator`,
-  `ComponentBatchCodec`, `Subjects`. Engine and Client both reference it.
-- Do **not** duplicate these the way the ECS primitives are duplicated. A schema
-  hash that differs between two processes is a schema hash that does not work.
-- Changing `SchemaHash`'s canonical form is a breaking protocol change. The form
-  is specified in `proto/ecs/protocol/v1/schema.proto`; keep the two in step.
-- Subject names belong in `Subjects`, never inline.
+- [`protocol/SPEC.md`](protocol/SPEC.md) is **normative**. It defines the parts of
+  the contract that are algorithms rather than message shapes: schema hashing,
+  batch encoding, subject names, the handshake. Where an implementation and the
+  spec disagree, the implementation is wrong.
+- Each language owns its own implementation under `protocol/<language>/`. Do not
+  try to share one — the algorithm has to run inside each SDK.
+- The schema hash is defined over `FileDescriptorProto`. Never derive it from a
+  runtime's reflection API: C#, protobuf-es and Python disagree about maps,
+  synthetic oneofs and type names, and any of those makes the hash unportable.
+- Changing the canonical form is a **breaking protocol change**. Regenerate the
+  vectors with `ECS_WRITE_CONFORMANCE_VECTORS=1 dotnet test engine/Engine.Tests`,
+  in its own commit, and re-run every implementation's conformance suite.
+- Adding a component type to `protocol/conformance` coverage means adding it to
+  **both** `SchemaHashConformanceTests.Cases` and the TS `SCHEMAS` list.
+- Subject names belong in each language's `Subjects`, never inline.
+- `PayloadValidator` is coordinator-side only; clients never call it.
 
 ### Protobuf & buf
 

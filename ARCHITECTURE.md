@@ -142,9 +142,16 @@ message and enum it transitively references, not over serialised descriptors —
 protobuf serialisation is not canonical, so hashing it would make identity
 depend on which runtime produced the bytes. Comments, options, file names and
 declaration order are excluded; field numbers, names, labels, types, oneof
-grouping and the referenced type closure are not. The exact rendering is
-specified in `proto/ecs/protocol/v1/schema.proto` and implemented once, in
-`protocol/csharp/Ecs.Protocol/SchemaHash.cs`.
+grouping and the referenced type closure are not.
+
+Crucially, the rendering is defined over `FileDescriptorProto` and **not** over
+any runtime's reflection API. Runtimes genuinely disagree about how to model a
+schema: C# reports a map field as repeated and exposes its synthetic entry type,
+protobuf-es hides the entry behind `fieldKind: "map"`, Python surfaces it with
+the `map_entry` option set. The descriptor has one answer, so every
+implementation walks the descriptor and resolves references itself. The exact
+rendering is specified in [`protocol/SPEC.md`](protocol/SPEC.md) §1 and pinned by
+the vectors in `protocol/conformance/`.
 
 Because the world holds descriptors, it can do something a bytes-only store
 cannot: **validate a payload against the schema it claims to be** without
@@ -397,7 +404,10 @@ ecs-engine/
 │       ├── csharp/              # Ecs.Protos.csproj
 │       └── ts/                  # @ecs/protos npm package (browser and Node)
 ├── protocol/                    # Hand-written companions to the generated code
-│   └── csharp/Ecs.Protocol/     # Schema hashing, batch codecs, validation, subjects
+│   ├── SPEC.md                  # Normative: hashing, batches, subjects, handshake
+│   ├── conformance/             # Vectors every implementation must reproduce
+│   ├── csharp/Ecs.Protocol/     # Used by the coordinator and the C# SDK
+│   └── ts/                     # @ecs/protocol, used by the editor
 ├── editor/                     # One Node process: React UI + API + NATS bridge
 │   ├── package.json
 │   ├── vite.config.ts
@@ -632,10 +642,27 @@ One encoding, all the way down: **Protobuf**.
   step and no cross-language wire fixtures to maintain.
 
 A few parts of the contract are algorithms rather than message shapes — the
-schema hash, the batch codec, payload validation, the subject names. Those live
-in `protocol/csharp/Ecs.Protocol`, referenced by both the coordinator and the
-SDK. A schema hash that differs between two processes is a schema hash that does
-not work, so there is exactly one implementation of it.
+schema hash, the batch codec, payload validation, the subject names. Generated
+code cannot express those, so each language implements them itself under
+`protocol/<language>/`, against one normative specification in
+[`protocol/SPEC.md`](protocol/SPEC.md).
+
+A schema hash that differs between two processes is a schema hash that does not
+work: the coordinator binds a logical name to exactly one hash, so an
+implementation that is one byte out cannot register a single component type.
+Sharing one implementation is not an option — the algorithm has to run inside
+each SDK — so the contract is enforced from outside instead. Every implementation
+reproduces the same vectors in `protocol/conformance/`, and CI fails if they
+change without review. The vectors carry the full canonical rendering next to
+each hash, so a mismatch is a readable diff rather than two 64-bit numbers.
+
+That is not a theoretical safeguard. Writing the TypeScript implementation from
+the spec immediately surfaced a genuine divergence: `descriptor.proto` is proto2,
+so `oneof_index` is an optional scalar, and protobuf-es reports it as `0` both
+for a field in oneof `0` and for a field in no oneof at all. The original rule
+for detecting synthetic oneofs depended on telling those apart, which C# can do
+and protobuf-es cannot. The rule now derives synthetic oneofs from the fields
+instead — see [`SPEC.md`](protocol/SPEC.md) §1.7.
 
 NATS headers carry routing metadata so consumers can filter without
 deserialising the payload.

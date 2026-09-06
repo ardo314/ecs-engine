@@ -1,0 +1,28 @@
+{
+  "name": "@ecs/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.2.3",
+    "@ecs/protos": "*",
+    "@noble/hashes": "^1.6.1"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2",
+    "vitest": "^2.1.8"
+  }
+}

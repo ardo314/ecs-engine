@@ -26,10 +26,14 @@ public static class ComponentType<T> where T : IMessage<T>, new()
     /// <summary>The protobuf full name, e.g. <c>movement.v1.Position</c>.</summary>
     public static string Name { get; } = Descriptor.FullName;
 
-    /// <summary>Exact identity of the type's structure.</summary>
-    public static ulong SchemaHash { get; } = Ecs.Protocol.SchemaHash.Of(Descriptor);
-
     public static ByteString FileDescriptorSet { get; } = Descriptors.FileDescriptorSetFor(Descriptor);
+
+    /// <summary>
+    /// Exact identity of the type's structure, taken from the same bytes the
+    /// coordinator will re-hash, so the SDK cannot agree with itself while disagreeing
+    /// with everyone else.
+    /// </summary>
+    public static ulong SchemaHash { get; } = Ecs.Protocol.SchemaHash.Of(FileDescriptorSet, Name);
 
     public static ComponentTypeRef Ref { get; } = new() { LogicalName = Name, SchemaHash = SchemaHash };
 

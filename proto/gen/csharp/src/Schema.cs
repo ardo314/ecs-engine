@@ -92,19 +92,13 @@ namespace Ecs.Protocol.V1 {
   /// Identity of a component type as it travels on the wire, before the coordinator
   /// has bound it to a dense id.
   ///
-  /// `schema_hash` is the exact identity of the type's structure. It is a truncation
-  /// of SHA-256 over a canonical textual rendering of the message and every message
-  /// and enum it transitively references, so any language that can read a
-  /// FileDescriptorSet can reproduce it. The rendering is:
+  /// `schema_hash` is the exact identity of the type's structure: a truncation of
+  /// SHA-256 over a canonical textual rendering of the message and everything it
+  /// transitively references. The rendering is defined over FileDescriptorProto, not
+  /// over any runtime's reflection API, so every language can reproduce it.
   ///
-  ///   message &lt;full_name>\n
-  ///   field &lt;number> &lt;name> &lt;label> &lt;type> [&lt;type_name>]\n   (fields ascending by number)
-  ///   oneof &lt;index> &lt;name>\n                                 (oneofs ascending by index)
-  ///   enum &lt;full_name>\n
-  ///   value &lt;number> &lt;name>\n                                (values ascending by number)
-  ///
-  /// Referenced types are emitted after the root, once each, ordered by full name.
-  /// The first eight bytes of the digest are read big-endian.
+  /// The algorithm is specified in protocol/SPEC.md §1 and pinned by the vectors in
+  /// protocol/conformance/. It is not restated here — one normative source only.
   ///
   /// The coordinator requires an exact match. Compatible schema evolution is
   /// deliberately not modelled — a changed schema is a different type until there is

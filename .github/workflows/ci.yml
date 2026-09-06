@@ -71,6 +71,15 @@ jobs:
           dotnet test engine/Engine.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
           dotnet test clients/csharp/CSharp.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
 
+      # The canonical schema rendering is an algorithm, so it cannot be generated from
+      # the schema the way message shapes can. It is pinned instead, and every
+      # implementation checks itself against the same file.
+      - name: Conformance (C#)
+        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Conformance."
+
+      - name: Conformance vectors are unchanged
+        run: git diff --exit-code -- protocol/conformance
+
       - name: Integration tests (Engine)
         run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Integration."
         env:
@@ -100,8 +109,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Runs the same vectors as the C# suite. Two implementations agreeing on a file
+      # neither owns is what makes the protocol implementable in a third language.
       - name: Test
         run: npm test
+
+      - name: Conformance vectors are unchanged
+        run: git diff --exit-code -- protocol/conformance
 
   test-nova-installer:
     runs-on: ubuntu-latest

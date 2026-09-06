@@ -105,9 +105,13 @@ public sealed class SchemaRegistry
         }
 
         MessageDescriptor descriptor;
+        ulong actualHash;
         try
         {
+            // Resolved for payload validation; hashed straight from the declared bytes,
+            // which is the form every language agrees on.
             descriptor = Descriptors.Resolve(declaration.FileDescriptorSet, name);
+            actualHash = SchemaHash.Of(declaration.FileDescriptorSet, name);
         }
         catch (InvalidDescriptorSetException ex)
         {
@@ -117,7 +121,6 @@ public sealed class SchemaRegistry
 
         // The hash is recomputed rather than trusted: a declaration is only as good as
         // the descriptors that came with it.
-        var actualHash = SchemaHash.Of(descriptor);
         if (actualHash != declared.SchemaHash)
         {
             rejection = Reject(declared, SchemaRejectionReason.HashNotDerivedFromDescriptor,
