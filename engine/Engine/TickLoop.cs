@@ -1,4 +1,3 @@
-using Ecs.Protocol;
 using Ecs.Protocol.V1;
 using Google.Protobuf;
 using NATS.Client.Core;

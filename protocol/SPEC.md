@@ -337,6 +337,19 @@ Structural commands returned in `SystemResult.commands` are not covered by the
 lease's entity slice; they are queued and applied at the coordinator's next
 synchronisation point.
 
+### 5.2 Payload validation
+
+"Validates against its schema" above means a **structural** check: the bytes
+parse, every field number the schema knows about carries a wire type the schema
+permits, and nested messages are themselves valid. Unknown field numbers MUST be
+allowed — proto3 keeps them, and rejecting them would be stricter than protobuf
+itself.
+
+Validation is a **coordinator obligation, not a client one**. The world is the
+only party that has to distrust a payload; a client validating bytes it has just
+encoded would only be testing its own protobuf runtime. An implementation that
+acts solely as a client need not implement this section.
+
 ---
 
 ## 6. Encoding footguns

@@ -1,10 +1,10 @@
-namespace Ecs.Protocol;
+namespace Engine.Core;
 
 /// <summary>
 /// The NATS subject hierarchy. Routing metadata belongs in subjects and headers,
 /// never in a payload, so this is the single place a subject name is written down.
 /// </summary>
-public static class Subjects
+internal static class Subjects
 {
     public const string Prefix = "engine";
 

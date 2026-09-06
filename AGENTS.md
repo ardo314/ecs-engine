@@ -40,22 +40,21 @@ ecs-engine/
 │   └── gen/                     # `buf generate` output — committed, never hand-edited
 │       ├── csharp/              # Ecs.Protos.csproj
 │       └── ts/                  # @ecs/protos npm package
-├── protocol/                    # Hand-written companion to the generated code
+├── protocol/                    # The contract, not an implementation of it
 │   ├── SPEC.md                  # Normative wire contract (hashing, batches, subjects)
-│   ├── conformance/             # Vectors every implementation must reproduce
-│   ├── csharp/Ecs.Protocol/     # SchemaHash, ComponentBatchCodec, PayloadValidator, Subjects
-│   └── ts/                      # @ecs/protocol
+│   └── conformance/             # Vectors every implementation must reproduce
 ├── engine/                      # C# solution — Coordinator
 │   ├── Engine.sln
-│   └── Engine/                  # Coordinator (self-contained, includes core types)
-├── clients/                     # Language-specific SDKs
-│   └── csharp/                  # C# client SDK
-│       ├── CSharp.sln
-│       ├── Client/              # SDK library (own copy of ECS primitives)
-│       └── Client.Tests/
+│   └── Engine/                  # Coordinator; owns Protocol/ and PayloadValidator
+├── clients/                     # Language-specific SDKs, each owning its protocol copy
+│   ├── csharp/
+│   │   ├── CSharp.sln
+│   │   ├── Client/              # SDK library, owns Protocol/
+│   │   └── Client.Tests/
+│   └── typescript/              # @ecs/client, owns src/protocol/
 ├── editor/                      # One Node process: React UI + API + NATS bridge
 │   ├── src/client/              # React + Mantine
-│   ├── src/server/              # Hono, protobuf decoding, schema registry
+│   ├── src/server/              # Hono, builds on @ecs/client
 │   └── test/                    # Vitest
 ├── examples/                    # Example systems
 ├── deployments/nova/            # Wandelbots NOVA installer
@@ -120,18 +119,23 @@ ecs-engine/
   the contract that are algorithms rather than message shapes: schema hashing,
   batch encoding, subject names, the handshake. Where an implementation and the
   spec disagree, the implementation is wrong.
-- Each language owns its own implementation under `protocol/<language>/`. Do not
-  try to share one — the algorithm has to run inside each SDK.
+- **There are no shared protocol projects.** Every side owns its own copy:
+  `engine/Engine/Protocol/`, `clients/csharp/Client/Protocol/`,
+  `clients/typescript/src/protocol/`. Do not reintroduce a shared library.
+- What keeps them in agreement is `protocol/conformance/schema-hash.json`, not
+  shared code. Each implementation has its own conformance suite reading that one
+  file. Touching any implementation means running all of them.
 - The schema hash is defined over `FileDescriptorProto`. Never derive it from a
   runtime's reflection API: C#, protobuf-es and Python disagree about maps,
   synthetic oneofs and type names, and any of those makes the hash unportable.
 - Changing the canonical form is a **breaking protocol change**. Regenerate the
   vectors with `ECS_WRITE_CONFORMANCE_VECTORS=1 dotnet test engine/Engine.Tests`,
   in its own commit, and re-run every implementation's conformance suite.
-- Adding a component type to `protocol/conformance` coverage means adding it to
-  **both** `SchemaHashConformanceTests.Cases` and the TS `SCHEMAS` list.
-- Subject names belong in each language's `Subjects`, never inline.
-- `PayloadValidator` is coordinator-side only; clients never call it.
+- Adding a covered type means adding it to **all three** case lists: the engine's
+  and the C# SDK's `SchemaHashConformanceTests`, and the TS `SCHEMAS` list.
+- Payload validation is coordinator-only (`engine/Engine/PayloadValidator.cs`).
+  Clients never call it, so do not add it to an SDK.
+- Subject names belong in each implementation's `Subjects`, never inline.
 
 ### Protobuf & buf
 
@@ -211,10 +215,9 @@ ecs-engine/
 ### Dependencies
 
 - Keep dependency count minimal. Justify new packages.
-- `proto/gen/csharp/Ecs.Protos.csproj` and `protocol/csharp/Ecs.Protocol` are the
-  two projects both Engine and Client reference. They are the wire contract, so
-  they are exempt from the rule below that the two keep their own copies of the
-  ECS primitives.
+- `proto/gen/csharp/Ecs.Protos.csproj` is the only project both Engine and Client
+  reference. It is generated, so it is exempt from the rule that the two keep
+  their own copies of everything else — including the protocol runtime.
 - Pin major versions in `.csproj` files.
 
 ### Testing

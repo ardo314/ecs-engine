@@ -389,12 +389,13 @@ ecs-engine/
 │   │   └── Program.cs
 │   └── Engine.Tests/
 ├── clients/                    # Language-specific SDKs
-│   └── csharp/
-│       ├── CSharp.sln
-│       ├── Client/             # System-authoring SDK (class library)
-│       │   ├── Client.csproj
-│       │   └── SystemRunner.cs
-│       └── Client.Tests/
+│   ├── csharp/
+│   │   ├── CSharp.sln
+│   │   ├── Client/             # System-authoring SDK; owns Protocol/
+│   │   │   ├── Client.csproj
+│   │   │   └── SystemRunner.cs
+│   │   └── Client.Tests/
+│   └── typescript/             # @ecs/client; owns src/protocol/
 ├── proto/                       # Protobuf schemas (a buf module)
 │   ├── ecs/v1/                  # Engine-generic: EntityId, ComponentInfo, ComponentSchema
 │   ├── ecs/protocol/v1/         # The control plane: schema, query, tick, world
@@ -403,11 +404,9 @@ ecs-engine/
 │   └── gen/                     # `buf generate` output, committed
 │       ├── csharp/              # Ecs.Protos.csproj
 │       └── ts/                  # @ecs/protos npm package (browser and Node)
-├── protocol/                    # Hand-written companions to the generated code
+├── protocol/                    # The contract, not an implementation of it
 │   ├── SPEC.md                  # Normative: hashing, batches, subjects, handshake
-│   ├── conformance/             # Vectors every implementation must reproduce
-│   ├── csharp/Ecs.Protocol/     # Used by the coordinator and the C# SDK
-│   └── ts/                     # @ecs/protocol, used by the editor
+│   └── conformance/             # Vectors every implementation must reproduce
 ├── editor/                     # One Node process: React UI + API + NATS bridge
 │   ├── package.json
 │   ├── vite.config.ts
@@ -642,19 +641,24 @@ One encoding, all the way down: **Protobuf**.
   step and no cross-language wire fixtures to maintain.
 
 A few parts of the contract are algorithms rather than message shapes — the
-schema hash, the batch codec, payload validation, the subject names. Generated
-code cannot express those, so each language implements them itself under
-`protocol/<language>/`, against one normative specification in
-[`protocol/SPEC.md`](protocol/SPEC.md).
+schema hash, the batch codec, the subject names. Generated code cannot express
+those, so **every side implements them itself and nothing is shared**: the
+coordinator has a copy, the C# SDK has a copy, the TypeScript SDK has a copy.
+
+That is not duplication for its own sake. Sharing was never what kept two
+implementations in agreement — [`protocol/SPEC.md`](protocol/SPEC.md) and the
+vectors in `protocol/conformance/` are, which is exactly how the TypeScript
+implementation stays correct while sharing nothing with C#. Once the vectors
+carry that weight, a shared library only blurs ownership and invites server-only
+code into a library the client ships.
 
 A schema hash that differs between two processes is a schema hash that does not
 work: the coordinator binds a logical name to exactly one hash, so an
-implementation that is one byte out cannot register a single component type.
-Sharing one implementation is not an option — the algorithm has to run inside
-each SDK — so the contract is enforced from outside instead. Every implementation
-reproduces the same vectors in `protocol/conformance/`, and CI fails if they
-change without review. The vectors carry the full canonical rendering next to
-each hash, so a mismatch is a readable diff rather than two 64-bit numbers.
+implementation that is one byte out cannot register a single component type. So
+the contract is enforced from outside. Each implementation has its own conformance
+suite reading the same file, and CI fails if that file changes without review. The
+vectors carry the full canonical rendering next to each hash, so a mismatch is a
+readable diff rather than two 64-bit numbers.
 
 That is not a theoretical safeguard. Writing the TypeScript implementation from
 the spec immediately surfaced a genuine divergence: `descriptor.proto` is proto2,
@@ -663,6 +667,10 @@ for a field in oneof `0` and for a field in no oneof at all. The original rule
 for detecting synthetic oneofs depended on telling those apart, which C# can do
 and protobuf-es cannot. The rule now derives synthetic oneofs from the fields
 instead — see [`SPEC.md`](protocol/SPEC.md) §1.7.
+
+Payload validation is the one part deliberately left out of the SDKs: the world
+is the only party that has to distrust a payload, so it lives in the coordinator
+alone.
 
 NATS headers carry routing metadata so consumers can filter without
 deserialising the payload.

@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\protocol\csharp\Ecs.Protocol\Ecs.Protocol.csproj" />
+    <ProjectReference Include="..\..\proto\gen\csharp\Ecs.Protos.csproj" />
   </ItemGroup>
 
 </Project>

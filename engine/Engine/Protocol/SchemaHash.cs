@@ -5,24 +5,25 @@ using System.Text;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 
-namespace Ecs.Protocol;
+namespace Engine.Coordinator;
 
 /// <summary>
 /// The exact identity of a component type's structure, per <c>protocol/SPEC.md</c> §1.
 /// </summary>
 /// <remarks>
+/// The coordinator's own implementation. The C# SDK has a separate one, and they are
+/// kept honest by <c>protocol/conformance/schema-hash.json</c> rather than by sharing
+/// code — the same mechanism that keeps the TypeScript implementation honest. Nothing
+/// here may be changed without regenerating those vectors.
+///
 /// Computed over <c>FileDescriptorProto</c> rather than over this runtime's reflection
 /// API. That is not an implementation preference — runtimes genuinely disagree about
 /// how to model a schema. C# reports a map field as repeated and exposes its synthetic
 /// entry type; protobuf-es hides the entry entirely; Python surfaces it with the
 /// <c>map_entry</c> option set. Hashing what C# sees would mean no other language could
 /// register a component type that contains a map.
-///
-/// The descriptor has one answer, so this walks the descriptor and resolves type
-/// references itself. Changing anything here is a breaking protocol change: regenerate
-/// <c>protocol/conformance/schema-hash.json</c> deliberately.
 /// </remarks>
-public static class SchemaHash
+internal static class SchemaHash
 {
     /// <summary>The 64-bit schema hash of <paramref name="logicalName"/> within the set.</summary>
     public static ulong Of(ByteString fileDescriptorSet, string logicalName) =>

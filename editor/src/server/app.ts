@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Subjects } from "@ecs/protocol";
+import { Subjects } from "@ecs/client";
 import {
   CommandBatchSchema,
   type StructuralCommand,

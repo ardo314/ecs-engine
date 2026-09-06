@@ -72,10 +72,13 @@ jobs:
           dotnet test clients/csharp/CSharp.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
 
       # The canonical schema rendering is an algorithm, so it cannot be generated from
-      # the schema the way message shapes can. It is pinned instead, and every
-      # implementation checks itself against the same file.
-      - name: Conformance (C#)
-        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Conformance."
+      # the schema the way message shapes can. It is pinned instead, and each of the
+      # three implementations — coordinator, C# SDK, TypeScript SDK — checks itself
+      # against the same file.
+      - name: Conformance (coordinator + C# SDK)
+        run: |
+          dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Conformance."
+          dotnet test clients/csharp/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Conformance."
 
       - name: Conformance vectors are unchanged
         run: git diff --exit-code -- protocol/conformance

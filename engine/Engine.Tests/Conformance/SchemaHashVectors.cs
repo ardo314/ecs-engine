@@ -1,13 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Ecs.Protocol.Conformance;
+namespace Engine.Tests.Conformance;
 
 /// <summary>
 /// The pinned expectation for one component type.
 /// </summary>
 /// <remarks>
-/// <see cref="Canonical"/> is carried alongside the hash on purpose: when a second
+/// <see cref="Canonical"/> is carried alongside the hash on purpose: when another
 /// implementation disagrees, a diff of the rendering says which line is wrong, whereas
 /// two 64-bit numbers say nothing at all.
 /// </remarks>
@@ -48,6 +48,26 @@ public sealed record SchemaHashVectors
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    /// <summary>Formats a hash the way the vector file stores it.</summary>
     public static string Format(ulong hash) => $"0x{hash:x16}";
+
+    public static SchemaHashVectors Load() =>
+        JsonSerializer.Deserialize<SchemaHashVectors>(File.ReadAllText(Path), Json)
+            ?? throw new InvalidOperationException("Vector file is empty.");
+
+    public static string Path =>
+        System.IO.Path.Combine(RepositoryRoot(), "protocol", "conformance", "schema-hash.json");
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(System.IO.Path.Combine(directory.FullName, "protocol", "SPEC.md")))
+                return directory.FullName;
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate the repository root from the test binary.");
+    }
 }

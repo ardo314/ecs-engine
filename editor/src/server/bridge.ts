@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Subjects } from "@ecs/protocol";
+import { SchemaRegistry, Subjects } from "@ecs/client";
 import {
   WatchCancelSchema,
   WatchDataSchema,
@@ -11,7 +11,6 @@ import {
   type SystemInfo,
 } from "@ecs/protos/ecs/protocol/v1/world_pb.js";
 import type { Broadcaster } from "./broadcaster.js";
-import { SchemaRegistry } from "./schemas.js";
 
 const RETRY_DELAY_MS = 2000;
 

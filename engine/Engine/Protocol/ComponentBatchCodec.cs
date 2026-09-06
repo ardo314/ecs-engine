@@ -2,14 +2,14 @@ using System.Collections.Concurrent;
 using Ecs.Protocol.V1;
 using Google.Protobuf;
 
-namespace Ecs.Protocol;
+namespace Engine.Coordinator;
 
 /// <summary>
 /// A column of one component type over a slice of entities, in the shape the rest of
 /// the engine works with. <c>null</c> means the entity does not have the component —
 /// an empty protobuf message is zero bytes, so length cannot carry absence.
 /// </summary>
-public sealed record ComponentColumn(uint TypeId, IReadOnlyList<ulong> Entities, IReadOnlyList<byte[]?> Rows)
+internal sealed record ComponentColumn(uint TypeId, IReadOnlyList<ulong> Entities, IReadOnlyList<byte[]?> Rows)
 {
     public int Count => Math.Min(Entities.Count, Rows.Count);
 }
@@ -19,7 +19,7 @@ public sealed record ComponentColumn(uint TypeId, IReadOnlyList<ulong> Entities,
 /// not depend on it, so the data plane can move to a columnar or shared-memory layout
 /// without the control plane changing.
 /// </summary>
-public interface IComponentBatchCodec
+internal interface IComponentBatchCodec
 {
     BatchEncoding Encoding { get; }
 
@@ -32,7 +32,7 @@ public interface IComponentBatchCodec
 /// The codecs this process can speak. Protobuf is always present; others register
 /// themselves.
 /// </summary>
-public static class ComponentBatchCodecs
+internal static class ComponentBatchCodecs
 {
     private static readonly ConcurrentDictionary<BatchEncoding, IComponentBatchCodec> Registered = new();
 
@@ -75,7 +75,7 @@ public static class ComponentBatchCodecs
 /// <summary>
 /// One encoded protobuf message per entity, with a parallel presence bitmap.
 /// </summary>
-public sealed class ProtobufBatchCodec : IComponentBatchCodec
+internal sealed class ProtobufBatchCodec : IComponentBatchCodec
 {
     public static ProtobufBatchCodec Instance { get; } = new();
 

@@ -1,17 +1,16 @@
-using System.Text.Json;
-using Ecs.Protocol;
-using Ecs.Protocol.Conformance;
+using Engine.Coordinator;
 using Google.Protobuf.Reflection;
 
 namespace Engine.Tests.Conformance;
 
 /// <summary>
-/// Pins the schema hash so a second implementation has something to be right about.
+/// Pins the coordinator's schema hash implementation.
 /// </summary>
 /// <remarks>
-/// These vectors are the whole reason the protocol can be implemented more than once.
-/// The canonical form cannot be generated from the schema — it is an algorithm — so it
-/// is pinned here instead, and every language checks itself against the same file.
+/// There are three implementations of this algorithm — the coordinator's, the C# SDK's
+/// and the TypeScript SDK's — and no shared code between any of them. The vectors in
+/// <c>protocol/conformance/</c> are the only thing holding them together, so each one
+/// checks itself against the same file.
 ///
 /// To change the rendering deliberately, run with
 /// <c>ECS_WRITE_CONFORMANCE_VECTORS=1</c> and commit the result on its own. CI fails if
@@ -23,7 +22,7 @@ public class SchemaHashConformanceTests
     /// Chosen to cover every place runtimes disagree, plus real protocol types so the
     /// vectors break if the wire contract shifts underneath them.
     /// </summary>
-    private static readonly MessageDescriptor[] Cases =
+    internal static readonly MessageDescriptor[] Cases =
     [
         Testing.V1.ConformanceLeaf.Descriptor,
         Testing.V1.ConformanceLeafTwin.Descriptor,
@@ -42,15 +41,6 @@ public class SchemaHashConformanceTests
         Ecs.Protocol.V1.ComponentBatch.Descriptor,
         Ecs.Protocol.V1.StructuralCommand.Descriptor,
     ];
-
-    private static string VectorPath => Path.Combine(RepositoryRoot(), "protocol", "conformance", "schema-hash.json");
-
-    private static SchemaHashVectors Load()
-    {
-        var json = File.ReadAllText(VectorPath);
-        return JsonSerializer.Deserialize<SchemaHashVectors>(json, SchemaHashVectors.Json)
-            ?? throw new InvalidOperationException("Vector file is empty.");
-    }
 
     public SchemaHashConformanceTests()
     {
@@ -71,14 +61,16 @@ public class SchemaHashConformanceTests
                 .OrderBy(c => c.LogicalName, StringComparer.Ordinal)],
         };
 
-        Directory.CreateDirectory(Path.GetDirectoryName(VectorPath)!);
-        File.WriteAllText(VectorPath, JsonSerializer.Serialize(vectors, SchemaHashVectors.Json) + "\n");
+        Directory.CreateDirectory(Path.GetDirectoryName(SchemaHashVectors.Path)!);
+        File.WriteAllText(
+            SchemaHashVectors.Path,
+            System.Text.Json.JsonSerializer.Serialize(vectors, SchemaHashVectors.Json) + "\n");
     }
 
     [Fact]
     public void VectorFile_DeclaresTheAlgorithmItPins()
     {
-        var vectors = Load();
+        var vectors = SchemaHashVectors.Load();
 
         Assert.Equal(SchemaHashVectors.CurrentVersion, vectors.Version);
         Assert.Equal(SchemaHashVectors.CurrentAlgorithm, vectors.Algorithm);
@@ -88,7 +80,9 @@ public class SchemaHashConformanceTests
     [Fact]
     public void EveryCoveredTypeIsPinned()
     {
-        var pinned = Load().Cases.Select(c => c.LogicalName).ToHashSet(StringComparer.Ordinal);
+        var pinned = SchemaHashVectors.Load().Cases
+            .Select(c => c.LogicalName)
+            .ToHashSet(StringComparer.Ordinal);
 
         foreach (var descriptor in Cases)
             Assert.Contains(descriptor.FullName, pinned);
@@ -97,7 +91,7 @@ public class SchemaHashConformanceTests
     [Fact]
     public void CanonicalFormMatchesTheVectors()
     {
-        foreach (var vector in Load().Cases)
+        foreach (var vector in SchemaHashVectors.Load().Cases)
         {
             var descriptor = Cases.Single(d => d.FullName == vector.LogicalName);
 
@@ -109,7 +103,7 @@ public class SchemaHashConformanceTests
     [Fact]
     public void HashMatchesTheVectors()
     {
-        foreach (var vector in Load().Cases)
+        foreach (var vector in SchemaHashVectors.Load().Cases)
         {
             var descriptor = Cases.Single(d => d.FullName == vector.LogicalName);
 
@@ -127,19 +121,5 @@ public class SchemaHashConformanceTests
 
             Assert.Equal(SchemaHash.Of(descriptor), SchemaHash.Of(set, descriptor.FullName));
         }
-    }
-
-    private static string RepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "protocol", "SPEC.md")))
-                return directory.FullName;
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test binary.");
     }
 }

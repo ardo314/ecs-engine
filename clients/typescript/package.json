@@ -1,5 +1,5 @@
 {
-  "name": "@ecs/protocol",
+  "name": "@ecs/client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -19,6 +19,7 @@
   "dependencies": {
     "@bufbuild/protobuf": "^2.2.3",
     "@ecs/protos": "*",
+    "@nats-io/nats-core": "^3.0.0",
     "@noble/hashes": "^1.6.1"
   },
   "devDependencies": {

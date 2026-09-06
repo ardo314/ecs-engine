@@ -43,7 +43,7 @@ interface Vectors {
 
 const vectors: Vectors = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../conformance/schema-hash.json", import.meta.url)),
+    fileURLToPath(new URL("../../../protocol/conformance/schema-hash.json", import.meta.url)),
     "utf8",
   ),
 );

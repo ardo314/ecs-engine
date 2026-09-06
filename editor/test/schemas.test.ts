@@ -6,7 +6,7 @@ import {
   file_movement_v1_movement,
   PositionSchema,
 } from "@ecs/protos/movement/v1/movement_pb.js";
-import { SchemaRegistry } from "../src/server/schemas";
+import { SchemaRegistry } from "@ecs/client";
 
 /** What the coordinator sends for a component type it has bound. */
 function positionType(typeId: number) {

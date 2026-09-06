@@ -1,7 +1,7 @@
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 
-namespace Ecs.Protocol;
+namespace Engine.Coordinator;
 
 /// <summary>
 /// A flat, fully-qualified view over a <c>FileDescriptorSet</c>.

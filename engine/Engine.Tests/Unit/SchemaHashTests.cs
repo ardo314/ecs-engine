@@ -1,5 +1,5 @@
-using Ecs.Protocol;
 using Ecs.V1;
+using Engine.Coordinator;
 using Testing.V1;
 
 namespace Engine.Tests.Unit;

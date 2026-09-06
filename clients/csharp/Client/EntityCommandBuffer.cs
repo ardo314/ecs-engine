@@ -119,9 +119,9 @@ internal static class DeclarationCache
                 Type = new ComponentTypeRef
                 {
                     LogicalName = descriptor.FullName,
-                    SchemaHash = Ecs.Protocol.SchemaHash.Of(descriptor),
+                    SchemaHash = Engine.Core.SchemaHash.Of(descriptor),
                 },
-                FileDescriptorSet = Ecs.Protocol.Descriptors.FileDescriptorSetFor(descriptor),
+                FileDescriptorSet = Descriptors.FileDescriptorSetFor(descriptor),
             };
             declaration.Description.AddRange(ComponentDescription.Of(descriptor));
             return declaration;

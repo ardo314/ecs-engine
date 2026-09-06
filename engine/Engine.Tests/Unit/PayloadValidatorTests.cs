@@ -1,4 +1,4 @@
-using Ecs.Protocol;
+using Engine.Coordinator;
 using Google.Protobuf;
 using Testing.V1;
 

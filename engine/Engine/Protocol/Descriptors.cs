@@ -1,14 +1,14 @@
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 
-namespace Ecs.Protocol;
+namespace Engine.Coordinator;
 
 /// <summary>
 /// Turning a component type into descriptors and back. This is the hinge the whole
 /// design turns on: a process that has never compiled a type can still hold its
 /// schema, hash it and validate payloads against it.
 /// </summary>
-public static class Descriptors
+internal static class Descriptors
 {
     /// <summary>
     /// The transitively closed <c>FileDescriptorSet</c> for the descriptor's own file,
@@ -85,7 +85,7 @@ public static class Descriptors
     }
 }
 
-public sealed class InvalidDescriptorSetException : Exception
+internal sealed class InvalidDescriptorSetException : Exception
 {
     public InvalidDescriptorSetException(string message) : base(message) { }
     public InvalidDescriptorSetException(string message, Exception inner) : base(message, inner) { }

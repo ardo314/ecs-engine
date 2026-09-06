@@ -1,19 +1,24 @@
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 
-namespace Ecs.Protocol;
+namespace Engine.Coordinator;
 
 /// <summary>
 /// Checks that a component payload is well-formed protobuf shaped like the schema it
 /// claims to be, without compiling the type.
 /// </summary>
 /// <remarks>
-/// This is a structural check, not a semantic one: it verifies that the bytes parse,
-/// that every field number known to the schema carries a wire type the schema permits,
-/// and that nested messages are themselves valid. Unknown field numbers are allowed —
-/// proto3 keeps them, and rejecting them would make the check stricter than protobuf
-/// itself. Combined with exact schema-hash matching, that is enough to stop a
-/// misrouted or corrupted payload from entering the world.
+/// Coordinator-side only. The world is the one party that has to distrust a payload;
+/// a client validating what it just encoded would only be testing its own protobuf
+/// runtime. That is why this lives here rather than in <c>Ecs.Protocol</c> — the shared
+/// library holds what both sides must agree on, not everything the protocol mentions.
+///
+/// The check is structural, not semantic: the bytes parse, every field number the
+/// schema knows about carries a wire type the schema permits, and nested messages are
+/// themselves valid. Unknown field numbers are allowed — proto3 keeps them, and
+/// rejecting them would make this stricter than protobuf itself. Combined with exact
+/// schema-hash matching, that is enough to stop a misrouted or corrupted payload from
+/// entering the world.
 /// </remarks>
 public static class PayloadValidator
 {
