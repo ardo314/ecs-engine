@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net.Sockets;
-using Engine.Core;
 
 namespace Client.Tests.Integration;
 
@@ -19,8 +18,6 @@ public class NatsClientFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Serialization.Initialize();
-
         var envUrl = Environment.GetEnvironmentVariable("NATS_URL");
         if (!string.IsNullOrEmpty(envUrl))
         {

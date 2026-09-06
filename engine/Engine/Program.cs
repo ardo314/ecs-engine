@@ -1,11 +1,5 @@
-﻿using System.Collections.Concurrent;
-using Engine.Coordinator;
-using Engine.Core;
-using Engine.Core.Messages;
-using MessagePack;
+﻿using Engine.Coordinator;
 using NATS.Client.Core;
-
-Serialization.Initialize();
 
 // NATS_BROKER is injected by hosts that supply their own broker, such as Wandelbots NOVA,
 // and may carry credentials as nats://user:token@host.
@@ -28,10 +22,10 @@ await nats.ConnectAsync();
 
 Console.WriteLine($"Connected to NATS at {Redact(natsUrl)}");
 
-var world = new WorldState();
-var registry = new SystemRegistry();
-var watchManager = new WatchManager();
-var pendingSpawns = new ConcurrentQueue<EntitySpawnRequest>();
+var schemas = new SchemaRegistry();
+var world = new WorldState(schemas);
+var systems = new SystemRegistry();
+var watches = new WatchManager();
 var cts = new CancellationTokenSource();
 
 Console.CancelKeyPress += (_, e) =>
@@ -41,12 +35,12 @@ Console.CancelKeyPress += (_, e) =>
 };
 
 // Start NATS subscription handlers and wait until they're active
-var handlers = new NatsHandlers(nats, registry, world, watchManager, pendingSpawns);
+var handlers = new NatsHandlers(nats, schemas, systems, world, watches);
 _ = Task.Run(() => handlers.StartAsync(cts.Token), cts.Token);
 await handlers.Ready;
 
 // Run tick loop
-var tickLoop = new TickLoop(nats, world, registry, watchManager, handlers, pendingSpawns, tickRate);
+var tickLoop = new TickLoop(nats, schemas, systems, world, watches, handlers, tickRate);
 await tickLoop.RunAsync(cts.Token);
 
 static string Redact(string url) =>

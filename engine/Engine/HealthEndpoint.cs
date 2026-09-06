@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Engine.Core;
+namespace Engine.Coordinator;
 
 /// <summary>
 /// The HTTP surface every deployment target probes: <c>GET /health</c> and

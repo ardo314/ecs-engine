@@ -1,14 +1,34 @@
-using Engine.Core.Messages;
+using Ecs.Protocol;
+using Ecs.Protocol.V1;
 
 namespace Engine.Coordinator;
 
 /// <summary>
-/// Tracks active watch subscriptions. Thread-safe for concurrent access from NATS handlers and the tick loop.
+/// A live subscription to the world's per-tick state.
 /// </summary>
-public class WatchManager
+public sealed class WatchSpec
 {
-    private readonly Lock _lock = new();
-    private readonly Dictionary<Guid, WatchSpec> _watches = new();
+    public required string WatchId { get; init; }
+    public required bool IncludeSystems { get; init; }
+    public required bool IncludeEntities { get; init; }
+    public EntityFilter? Filter { get; init; }
+    public required string DataSubject { get; init; }
+    public int LastSystemsVersion { get; set; } = -1;
+    public int LastSchemaVersion { get; set; } = -1;
+}
+
+/// <summary>
+/// Tracks watch subscriptions and what each watcher has already been told.
+/// </summary>
+/// <remarks>
+/// Systems, stages and schemas change rarely; entities change every tick. Tracking a
+/// version per watcher means a steady world costs entity data alone, and a watcher that
+/// connects mid-flight still gets the schema registry it needs to decode anything.
+/// </remarks>
+public sealed class WatchManager
+{
+    private readonly Lock _gate = new();
+    private readonly Dictionary<string, WatchSpec> _watches = new(StringComparer.Ordinal);
     private int _systemsVersion;
 
     public WatchResponse Register(WatchRequest request)
@@ -18,89 +38,62 @@ public class WatchManager
             WatchId = request.WatchId,
             IncludeSystems = request.IncludeSystems,
             IncludeEntities = request.IncludeEntities,
-            ComponentFilter = request.ComponentFilter,
-            AnyTypes = request.AnyTypes,
-            DataSubject = $"engine.watch.data.{request.WatchId}",
-            LastSystemsVersion = -1
+            Filter = request.Filter,
+            DataSubject = Subjects.WatchData(request.WatchId),
         };
 
-        lock (_lock)
-        {
-            _watches[request.WatchId] = spec;
-        }
+        lock (_gate) _watches[request.WatchId] = spec;
 
-        Console.WriteLine($"[WatchManager] Watch registered: {request.WatchId} (systems={request.IncludeSystems}, entities={request.IncludeEntities})");
+        Console.WriteLine(
+            $"[Watch] Registered {request.WatchId} " +
+            $"(systems={request.IncludeSystems}, entities={request.IncludeEntities})");
 
-        return new WatchResponse
-        {
-            WatchId = request.WatchId,
-            DataSubject = spec.DataSubject
-        };
+        return new WatchResponse { WatchId = request.WatchId, DataSubject = spec.DataSubject };
     }
 
-    public void Cancel(Guid watchId)
+    public void Cancel(string watchId)
     {
-        lock (_lock)
-        {
-            _watches.Remove(watchId);
-        }
-
-        Console.WriteLine($"[WatchManager] Watch cancelled: {watchId}");
+        lock (_gate) _watches.Remove(watchId);
+        Console.WriteLine($"[Watch] Cancelled {watchId}");
     }
 
-    /// <summary>
-    /// Called when a system registers or unregisters to bump the version.
-    /// </summary>
+    /// <summary>Called when a system registers or unregisters.</summary>
     public void NotifySystemsChanged()
     {
-        lock (_lock)
-        {
-            _systemsVersion++;
-        }
+        lock (_gate) _systemsVersion++;
+    }
+
+    public List<WatchSpec> ActiveWatches()
+    {
+        lock (_gate) return [.. _watches.Values];
     }
 
     /// <summary>
-    /// Returns a snapshot of active watches with their specs. The tick loop calls this to push data.
+    /// Whether this watcher still needs the system list, marking it as sent.
     /// </summary>
-    public List<WatchSpec> GetActiveWatches()
+    public bool ClaimSystems(WatchSpec spec)
     {
-        lock (_lock)
+        lock (_gate)
         {
-            return [.. _watches.Values];
-        }
-    }
+            if (!spec.IncludeSystems) return false;
+            if (spec.LastSystemsVersion == _systemsVersion) return false;
 
-    /// <summary>
-    /// Returns true if systems metadata should be included for this watch, and marks it as sent.
-    /// </summary>
-    public bool ShouldIncludeSystems(WatchSpec spec)
-    {
-        lock (_lock)
-        {
-            if (!spec.IncludeSystems)
-                return false;
-
-            if (spec.LastSystemsVersion == _systemsVersion)
-                return false;
-
-            // Update the version in the stored spec
-            if (_watches.TryGetValue(spec.WatchId, out var stored))
-            {
-                stored.LastSystemsVersion = _systemsVersion;
-            }
-
+            spec.LastSystemsVersion = _systemsVersion;
             return true;
         }
     }
-}
 
-public class WatchSpec
-{
-    public Guid WatchId { get; init; }
-    public bool IncludeSystems { get; init; }
-    public bool IncludeEntities { get; init; }
-    public string[]? ComponentFilter { get; init; }
-    public string[]? AnyTypes { get; init; }
-    public string DataSubject { get; init; } = "";
-    public int LastSystemsVersion { get; set; } = -1;
+    /// <summary>
+    /// Whether this watcher still needs the schema registry, marking it as sent.
+    /// </summary>
+    public bool ClaimSchemas(WatchSpec spec, int schemaVersion)
+    {
+        lock (_gate)
+        {
+            if (spec.LastSchemaVersion == schemaVersion) return false;
+
+            spec.LastSchemaVersion = schemaVersion;
+            return true;
+        }
+    }
 }

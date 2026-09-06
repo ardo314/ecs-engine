@@ -1,3 +1,4 @@
+using Ecs.Protocol.V1;
 using Google.Protobuf;
 
 namespace Engine.Core;
@@ -7,7 +8,7 @@ namespace Engine.Core;
 /// </summary>
 /// <remarks>
 /// A struct so query iteration stays allocation-free; converts implicitly to and from
-/// the <c>ecs.v1.Entity</c> message that reference components hold on the wire.
+/// the <c>ecs.v1.EntityId</c> message that reference components hold on the wire.
 /// </remarks>
 public readonly record struct Entity(ulong Id)
 {
@@ -18,15 +19,20 @@ public readonly record struct Entity(ulong Id)
 }
 
 /// <summary>
-/// The target of a command. Either a concrete entity, or the entity representing
-/// a component type — which the coordinator resolves by name and creates on first use.
+/// Builds the target of a structural command: either a concrete entity, or the entity
+/// that represents a component type.
 /// </summary>
-public readonly record struct CommandTarget(ulong EntityId, string? ComponentType = null)
+public static class Target
 {
-    public static CommandTarget OfComponentType(string typeName) => new(0, typeName);
+    public static CommandTarget Of(Entity entity) => new() { Entity = entity.Id };
+
+    /// <summary>
+    /// The entity representing a component type. Addressed by name rather than by id
+    /// because a system may describe a type in the same breath as it registers it.
+    /// </summary>
+    public static CommandTarget OfComponentType(string logicalName) =>
+        new() { ComponentType = logicalName };
 
     public static CommandTarget OfComponentType<T>() where T : IMessage<T>, new() =>
-        OfComponentType(ComponentTypeId.Of<T>().TypeName);
-
-    public static implicit operator CommandTarget(Entity entity) => new(entity.Id);
+        OfComponentType(ComponentType<T>.Name);
 }

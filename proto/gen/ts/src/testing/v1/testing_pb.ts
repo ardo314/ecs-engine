@@ -11,7 +11,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file testing/v1/testing.proto.
  */
 export const file_testing_v1_testing: GenFile = /*@__PURE__*/
-  fileDesc("Chh0ZXN0aW5nL3YxL3Rlc3RpbmcucHJvdG8SCnRlc3RpbmcudjEiDQoLVGVzdFNldHRpbmciHAoMVGVzdENhdGVnb3J5EgwKBG5hbWUYASABKAkijAEKDVRlc3REZXNjcmliZWQSDQoFdmFsdWUYASABKAU6bIK1GCwKKnR5cGUuZ29vZ2xlYXBpcy5jb20vdGVzdGluZy52MS5UZXN0U2V0dGluZ4K1GDgKK3R5cGUuZ29vZ2xlYXBpcy5jb20vdGVzdGluZy52MS5UZXN0Q2F0ZWdvcnkSCQoHQ29udHJvbCIgCg9UZXN0VW5kZXNjcmliZWQSDQoFdmFsdWUYASABKAUiJAoMVGVzdFBvc2l0aW9uEgkKAXgYASABKAISCQoBeRgCIAEoAiImCgxUZXN0VmVsb2NpdHkSCgoCdngYASABKAISCgoCdnkYAiABKAIiDgoMVGVzdERpc2FibGVkYgZwcm90bzM", [file_ecs_v1_component]);
+  fileDesc("Chh0ZXN0aW5nL3YxL3Rlc3RpbmcucHJvdG8SCnRlc3RpbmcudjEiDQoLVGVzdFNldHRpbmciHAoMVGVzdENhdGVnb3J5EgwKBG5hbWUYASABKAkijAEKDVRlc3REZXNjcmliZWQSDQoFdmFsdWUYASABKAU6bIK1GCwKKnR5cGUuZ29vZ2xlYXBpcy5jb20vdGVzdGluZy52MS5UZXN0U2V0dGluZ4K1GDgKK3R5cGUuZ29vZ2xlYXBpcy5jb20vdGVzdGluZy52MS5UZXN0Q2F0ZWdvcnkSCQoHQ29udHJvbCIgCg9UZXN0VW5kZXNjcmliZWQSDQoFdmFsdWUYASABKAUiJAoMVGVzdFBvc2l0aW9uEgkKAXgYASABKAISCQoBeRgCIAEoAiImCgxUZXN0VmVsb2NpdHkSCgoCdngYASABKAISCgoCdnkYAiABKAIiKAoQVGVzdFBvc2l0aW9uVHdpbhIJCgF4GAEgASgCEgkKAXkYAiABKAIiOAoKVGVzdFBhcmVudBIqCghwb3NpdGlvbhgBIAEoCzIYLnRlc3RpbmcudjEuVGVzdFBvc2l0aW9uIg4KDFRlc3REaXNhYmxlZGIGcHJvdG8z", [file_ecs_v1_component]);
 
 /**
  * @generated from message testing.v1.TestSetting
@@ -122,6 +122,50 @@ export const TestVelocitySchema: GenMessage<TestVelocity> = /*@__PURE__*/
   messageDesc(file_testing_v1_testing, 5);
 
 /**
+ * Same shape as TestPosition, different name — so schema identity has to be
+ * anchored to the type, not only to its fields.
+ *
+ * @generated from message testing.v1.TestPositionTwin
+ */
+export type TestPositionTwin = Message<"testing.v1.TestPositionTwin"> & {
+  /**
+   * @generated from field: float x = 1;
+   */
+  x: number;
+
+  /**
+   * @generated from field: float y = 2;
+   */
+  y: number;
+};
+
+/**
+ * Describes the message testing.v1.TestPositionTwin.
+ * Use `create(TestPositionTwinSchema)` to create a new message.
+ */
+export const TestPositionTwinSchema: GenMessage<TestPositionTwin> = /*@__PURE__*/
+  messageDesc(file_testing_v1_testing, 6);
+
+/**
+ * A component with a nested message, for payload validation.
+ *
+ * @generated from message testing.v1.TestParent
+ */
+export type TestParent = Message<"testing.v1.TestParent"> & {
+  /**
+   * @generated from field: testing.v1.TestPosition position = 1;
+   */
+  position?: TestPosition;
+};
+
+/**
+ * Describes the message testing.v1.TestParent.
+ * Use `create(TestParentSchema)` to create a new message.
+ */
+export const TestParentSchema: GenMessage<TestParent> = /*@__PURE__*/
+  messageDesc(file_testing_v1_testing, 7);
+
+/**
  * @generated from message testing.v1.TestDisabled
  */
 export type TestDisabled = Message<"testing.v1.TestDisabled"> & {
@@ -132,5 +176,5 @@ export type TestDisabled = Message<"testing.v1.TestDisabled"> & {
  * Use `create(TestDisabledSchema)` to create a new message.
  */
 export const TestDisabledSchema: GenMessage<TestDisabled> = /*@__PURE__*/
-  messageDesc(file_testing_v1_testing, 6);
+  messageDesc(file_testing_v1_testing, 8);
 

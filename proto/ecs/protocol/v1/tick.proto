@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package ecs.protocol.v1;
+
+import "ecs/protocol/v1/schema.proto";
+
+// How the payloads inside a ComponentBatch are laid out. The protocol does not
+// care which is used; the encoding travels with the data so a world and a system
+// can negotiate it without either being rebuilt.
+enum BatchEncoding {
+  BATCH_ENCODING_UNSPECIFIED = 0;
+
+  // `rows` holds one encoded protobuf message per entity, positionally aligned
+  // with `entities`. Absence is carried by `present`, not by length: an empty
+  // protobuf message encodes to zero bytes, so a zero-length row is a genuine
+  // marker component.
+  BATCH_ENCODING_PROTOBUF = 1;
+
+  // `opaque` holds an Arrow IPC stream. Reserved; not implemented.
+  BATCH_ENCODING_ARROW = 2;
+
+  // `opaque` names a shared memory region. Reserved; not implemented.
+  BATCH_ENCODING_SHARED_MEMORY = 3;
+}
+
+// One component type over a slice of entities. Self-contained so it can be routed,
+// cached and re-encoded without its surrounding message.
+message ComponentBatch {
+  uint32 type_id = 1;
+  BatchEncoding encoding = 2;
+  repeated uint64 entities = 3;
+
+  // BATCH_ENCODING_PROTOBUF.
+  repeated bytes rows = 4;
+  repeated bool present = 5;
+
+  // Every other encoding.
+  bytes opaque = 6;
+}
+
+// The coordinator handing a system a tick-scoped slice of the world under a lease.
+//
+// The lease is the distributed equivalent of an ECS borrow check. A result is
+// accepted only while the lease is live, and only for the tick, the entities and
+// the writable component types named here — so a slow worker cannot land tick
+// 8290's writes on a world that has already reached 8292.
+message SystemInvocation {
+  uint64 tick = 1;
+  string lease_id = 2;
+  float delta_seconds = 3;
+
+  // The entity slice assigned to this invocation. Writes outside it are rejected.
+  repeated uint64 entities = 4;
+
+  repeated ComponentBatch components = 5;
+
+  // Component type ids this lease permits writing.
+  repeated uint32 writable = 6;
+
+  // Tag type id -> the component type ids carrying it this tick.
+  repeated TagResolution tags = 7;
+}
+
+message TagResolution {
+  uint32 tag_type_id = 1;
+  repeated uint32 type_ids = 2;
+}
+
+// A system returning its work for a tick. Component writes and structural changes
+// are separate: writes land immediately, structural commands are queued and
+// applied at the next synchronisation point, so no system observes the world's
+// topology changing underneath its iteration.
+message SystemResult {
+  uint64 tick = 1;
+  string lease_id = 2;
+  string instance_id = 3;
+  repeated ComponentBatch writes = 4;
+  repeated StructuralCommand commands = 5;
+}
+
+// The coordinator's verdict on a result. Sent only when something was refused.
+message ResultRejected {
+  uint64 tick = 1;
+  string lease_id = 2;
+  ResultRejectionReason reason = 3;
+  string detail = 4;
+}
+
+enum ResultRejectionReason {
+  RESULT_REJECTION_REASON_UNSPECIFIED = 0;
+  RESULT_REJECTION_REASON_UNKNOWN_LEASE = 1;
+  RESULT_REJECTION_REASON_LEASE_EXPIRED = 2;
+  RESULT_REJECTION_REASON_TICK_MISMATCH = 3;
+  RESULT_REJECTION_REASON_NOT_WRITABLE = 4;
+  RESULT_REJECTION_REASON_ENTITY_OUT_OF_SLICE = 5;
+  RESULT_REJECTION_REASON_UNKNOWN_TYPE = 6;
+  RESULT_REJECTION_REASON_PAYLOAD_INVALID = 7;
+}
+
+// Either a concrete entity or the entity that represents a component type. Type
+// entities are addressed by name because a system may describe a type in the same
+// breath as it registers it.
+message CommandTarget {
+  oneof target {
+    uint64 entity = 1;
+    string component_type = 2;
+  }
+}
+
+message StructuralCommand {
+  oneof command {
+    SpawnEntity spawn = 1;
+    DespawnEntity despawn = 2;
+    AddComponent add = 3;
+    RemoveComponent remove = 4;
+  }
+}
+
+message SpawnEntity {
+  repeated ComponentValue components = 1;
+}
+
+message DespawnEntity {
+  uint64 entity = 1;
+}
+
+message AddComponent {
+  CommandTarget target = 1;
+  ComponentValue component = 2;
+}
+
+message RemoveComponent {
+  CommandTarget target = 1;
+  ComponentTypeRef type = 2;
+}
+
+// Structural commands submitted outside a tick — seeding, fixtures, editor edits.
+// Carries no lease because it claims no slice of the world.
+message CommandBatch {
+  repeated StructuralCommand commands = 1;
+}
+
+message CommandBatchAck {
+  uint64 applied_at_tick = 1;
+}

@@ -12,8 +12,8 @@ public class MovementSystem : SystemBase
     public MovementSystem()
     {
         _q = NewQuery()
-            .With(Query.ReadWrite<Position>())
-            .With(Query.ReadOnly<Velocity>());
+            .With(Query.Write<Position>())
+            .With(Query.Read<Velocity>());
     }
 
     protected override Task OnUpdateAsync()

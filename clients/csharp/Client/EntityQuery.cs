@@ -1,341 +1,323 @@
-using Engine.Core;
-using Engine.Core.Messages;
+using Ecs.Protocol;
+using Ecs.Protocol.V1;
 using Google.Protobuf;
-using MessagePack;
 
-namespace Client;
+namespace Engine.Core;
 
 /// <summary>
-/// A type-safe query over entities and their components.
-/// Built via fluent methods in the system constructor, then populated each tick with shard data.
-/// Provides per-entity Get/Set/TryGet and bulk iteration via Each.
+/// A typed view over the entities a system was leased for this tick.
 /// </summary>
-public class EntityQuery
+/// <remarks>
+/// Declared in the system constructor with <c>Query.Read&lt;T&gt;</c> and
+/// <c>Query.Write&lt;T&gt;</c>, bound to dense type ids during the registration
+/// handshake, then repopulated each tick from the invocation's component batches.
+///
+/// A system cannot look up an arbitrary entity: it sees exactly the slice its lease
+/// covers. To dereference a reference component, declare a second query matching the
+/// target entities and index it — both queries are filled from the same invocation in
+/// the same tick, so that costs bandwidth rather than a round trip.
+/// </remarks>
+public sealed class EntityQuery
 {
-    // ── Builder state ──────────────────────────────────────────────
+    // ── Declaration (system constructor) ────────────────────────
 
     private readonly List<ComponentAccess> _required = new();
     private readonly List<ComponentAccess> _optional = new();
-    private readonly List<string> _excluded = new();
-    private readonly List<ComponentAccess> _described = new();
-    private readonly List<string> _tags = new();
+    private readonly List<ComponentAccess> _excluded = new();
+    private readonly List<ComponentAccess> _tags = new();
     private bool _frozen;
 
-    // All component type names this query knows about (required + optional),
-    // used to populate data from shards.
-    private HashSet<string> _allTypes = new();
+    // ── Binding (registration handshake) ────────────────────────
 
-    // Read-only type names (for write enforcement)
-    private HashSet<string> _readOnlyTypes = new();
+    private SchemaBindings _bindings = new();
+    private readonly HashSet<uint> _declaredTypes = new();
+    private readonly HashSet<uint> _writableTypes = new();
+    private uint[] _requiredIds = [];
+    private uint[] _optionalIds = [];
+    private uint[] _excludedIds = [];
+    private uint[] _tagIds = [];
 
-    // ── Runtime state (populated each tick) ─────────────────────
+    // ── Tick state ──────────────────────────────────────────────
 
-    // Tag type name → component type names carrying it, as resolved for the current tick
-    private Dictionary<string, string[]> _resolvedTags = new();
+    private readonly Dictionary<uint, Dictionary<ulong, byte[]>> _data = new();
+    private readonly Dictionary<uint, uint[]> _resolvedTags = new();
+    private readonly List<Entity> _matched = new();
+    private readonly Dictionary<uint, Dictionary<ulong, byte[]>> _mutations = new();
 
-    // Entity-indexed component data: typeName → (entityId → deserialized bytes)
-    private readonly Dictionary<string, Dictionary<ulong, byte[]>> _data = new();
+    // ── Declaration ─────────────────────────────────────────────
 
-    // Entities matching this query's filter for the current tick
-    private readonly List<Entity> _matchedEntities = new();
-
-    // Buffered mutations from Set<T>()
-    private readonly Dictionary<string, Dictionary<ulong, byte[]>> _mutations = new();
-
-    private ulong _tickId;
-
-    // ── Builder methods (called in the system constructor) ──────
-
-    /// <summary>
-    /// Adds a required component. Entities must have this component to match.
-    /// </summary>
+    /// <summary>Adds a required component. An entity must have it to match.</summary>
     public EntityQuery With(ComponentAccess access)
     {
         ThrowIfFrozen();
         _required.Add(access);
-        _described.Add(access);
         return this;
     }
 
-    /// <summary>
-    /// Adds optional components. Entities must have at least one to match.
-    /// Use TryGet to access these at runtime.
-    /// </summary>
+    /// <summary>Adds optional components. An entity must have at least one to match.</summary>
     public EntityQuery WithAny(params ComponentAccess[] accesses)
     {
         ThrowIfFrozen();
         _optional.AddRange(accesses);
-        _described.AddRange(accesses);
         return this;
     }
 
-    /// <summary>
-    /// Excludes entities that have the specified component.
-    /// </summary>
+    /// <summary>Excludes entities carrying the component.</summary>
     public EntityQuery Without<T>() where T : IMessage<T>, new()
     {
         ThrowIfFrozen();
-        var access = Query.ReadOnly<T>();
-        _excluded.Add(access.TypeName);
-        _described.Add(access);
+        _excluded.Add(Query.Read<T>());
         return this;
     }
 
     /// <summary>
-    /// Joins through the type system: entities must carry at least one component whose
-    /// component type entity has <typeparamref name="TTag"/>. The matching component types
-    /// are resolved by the coordinator every tick, so types added later are picked up
-    /// without changing this query. Tagged components are read-only — access them via
-    /// <see cref="GetTagged{TTag}"/> or, when the concrete type is known, <see cref="TryGet{T}"/>.
+    /// Joins through the type system: an entity matches when it carries at least one
+    /// component whose <em>type entity</em> has <typeparamref name="TTag"/>. The matching
+    /// types are resolved by the coordinator every tick, so a type introduced later is
+    /// picked up without this query changing. Tag joins are read-only.
     /// </summary>
     public EntityQuery WithAnyTagged<TTag>() where TTag : IMessage<TTag>, new()
     {
         ThrowIfFrozen();
-        var access = Query.ReadOnly<TTag>();
-        _tags.Add(access.TypeName);
-        _described.Add(access);
+        _tags.Add(Query.Read<TTag>());
         return this;
     }
 
-    // ── Internal lifecycle ──────────────────────────────────────
+    // ── Binding ─────────────────────────────────────────────────
+
+    /// <summary>Every schema this query needs the coordinator to know about.</summary>
+    internal IEnumerable<ComponentTypeDeclaration> Declarations() =>
+        _required.Concat(_optional).Concat(_excluded).Concat(_tags).Select(a => a.Declaration);
+
+    internal IEnumerable<string> ReadNames() =>
+        _required.Concat(_optional).Where(a => !a.IsWrite).Select(a => a.Name);
+
+    internal IEnumerable<string> WriteNames() =>
+        _required.Concat(_optional).Where(a => a.IsWrite).Select(a => a.Name);
+
+    internal void Freeze() => _frozen = true;
 
     /// <summary>
-    /// Buffers each queried component type's own description.
+    /// Resolves declared type names to the ids the coordinator assigned. Called once the
+    /// registration handshake completes, before the first invocation.
     /// </summary>
-    internal void Describe(EntityCommandBuffer commands)
+    internal void Bind(SchemaBindings bindings)
     {
-        foreach (var access in _described)
-            access.Describe?.Invoke(commands);
+        _bindings = bindings;
+
+        _requiredIds = [.. _required.Select(a => bindings.Require(a.Name))];
+        _optionalIds = [.. _optional.Select(a => bindings.Require(a.Name))];
+        _excludedIds = [.. _excluded.Select(a => bindings.Require(a.Name))];
+        _tagIds = [.. _tags.Select(a => bindings.Require(a.Name))];
+
+        _declaredTypes.Clear();
+        _declaredTypes.UnionWith(_requiredIds);
+        _declaredTypes.UnionWith(_optionalIds);
+
+        _writableTypes.Clear();
+        foreach (var access in _required.Concat(_optional).Where(a => a.IsWrite))
+            _writableTypes.Add(bindings.Require(access.Name));
     }
 
-    internal void Freeze()
+    internal QueryDescriptor ToDescriptor()
     {
-        _frozen = true;
-        _allTypes = new HashSet<string>(
-            _required.Select(a => a.TypeName)
-                .Concat(_optional.Select(a => a.TypeName)));
-        _readOnlyTypes = new HashSet<string>(
-            _required.Where(a => !a.IsReadWrite).Select(a => a.TypeName)
-                .Concat(_optional.Where(a => !a.IsReadWrite).Select(a => a.TypeName)));
+        var descriptor = new QueryDescriptor();
+
+        for (var i = 0; i < _required.Count; i++)
+            descriptor.Required.Add(new Ecs.Protocol.V1.ComponentAccess
+            {
+                TypeId = _requiredIds[i],
+                Access = _required[i].Access,
+            });
+
+        for (var i = 0; i < _optional.Count; i++)
+            descriptor.Optional.Add(new Ecs.Protocol.V1.ComponentAccess
+            {
+                TypeId = _optionalIds[i],
+                Access = _optional[i].Access,
+            });
+
+        descriptor.Excluded.AddRange(_excludedIds);
+        descriptor.Tagged.AddRange(_tagIds.Select(id => new TaggedAccess { TagTypeId = id }));
+        return descriptor;
     }
+
+    // ── Per-tick population ─────────────────────────────────────
 
     /// <summary>
-    /// Populates the query from component shards received for this tick.
-    /// Builds entity-indexed lookups and filters entities to those matching requirements.
-    /// <paramref name="resolvedTags"/> maps each tag type name to the component type
-    /// names carrying it for this tick.
+    /// Rebuilds this query's view from the tick's invocation. The coordinator has already
+    /// narrowed the slice to entities matching at least one of the system's queries; this
+    /// applies each individual query's own filter.
     /// </summary>
-    internal void Populate(
-        Dictionary<string, (ulong[] Entities, byte[][] Data)> shards,
-        ulong tickId,
-        IReadOnlyDictionary<string, string[]>? resolvedTags = null)
+    internal void Populate(IReadOnlyDictionary<uint, ComponentColumn> columns, SystemInvocation invocation)
     {
-        _tickId = tickId;
         _data.Clear();
-        _matchedEntities.Clear();
+        _matched.Clear();
         _mutations.Clear();
+        _resolvedTags.Clear();
 
-        _resolvedTags = new Dictionary<string, string[]>();
-        var taggedTypes = new HashSet<string>();
-        foreach (var tag in _tags)
+        var taggedTypes = new HashSet<uint>();
+        foreach (var tagId in _tagIds)
         {
-            var types = resolvedTags is not null && resolvedTags.TryGetValue(tag, out var t) ? t : [];
-            _resolvedTags[tag] = types;
+            var resolved = invocation.Tags.FirstOrDefault(t => t.TagTypeId == tagId);
+            var types = resolved is null ? [] : resolved.TypeIds.ToArray();
+            _resolvedTags[tagId] = types;
             taggedTypes.UnionWith(types);
         }
 
-        // Build entity-indexed lookups for all types this query cares about
-        foreach (var (typeName, (entities, data)) in shards)
+        foreach (var (typeId, column) in columns)
         {
-            if (!_allTypes.Contains(typeName) && !_excluded.Contains(typeName)
-                && !taggedTypes.Contains(typeName))
-                continue;
-
-            var dict = new Dictionary<ulong, byte[]>();
-            for (var i = 0; i < entities.Length && i < data.Length; i++)
+            if (!_declaredTypes.Contains(typeId) &&
+                !_excludedIds.Contains(typeId) &&
+                !taggedTypes.Contains(typeId))
             {
-                if (data[i] is not null)
-                    dict[entities[i]] = data[i];
+                continue;
             }
-            _data[typeName] = dict;
+
+            var byEntity = new Dictionary<ulong, byte[]>(column.Count);
+            for (var i = 0; i < column.Count; i++)
+            {
+                if (column.Rows[i] is { } row) byEntity[column.Entities[i]] = row;
+            }
+            _data[typeId] = byEntity;
         }
 
-        // Determine the candidate entity set from the first required type's entities
         HashSet<ulong>? candidates = null;
 
-        foreach (var req in _required)
+        foreach (var typeId in _requiredIds)
         {
-            if (!_data.TryGetValue(req.TypeName, out var dict))
-            {
-                // Required type has no data at all → no entities match
-                return;
-            }
+            if (!_data.TryGetValue(typeId, out var byEntity)) return;
 
-            if (candidates is null)
-                candidates = new HashSet<ulong>(dict.Keys);
-            else
-                candidates.IntersectWith(dict.Keys);
+            if (candidates is null) candidates = [.. byEntity.Keys];
+            else candidates.IntersectWith(byEntity.Keys);
         }
 
-        // Each tag requires at least one component of a type carrying it
-        foreach (var tag in _tags)
+        foreach (var tagId in _tagIds)
         {
             var withTag = new HashSet<ulong>();
-            foreach (var typeName in _resolvedTags[tag])
+            foreach (var typeId in _resolvedTags[tagId])
             {
-                if (_data.TryGetValue(typeName, out var dict))
-                    withTag.UnionWith(dict.Keys);
+                if (_data.TryGetValue(typeId, out var byEntity)) withTag.UnionWith(byEntity.Keys);
             }
 
-            if (candidates is null)
-                candidates = withTag;
-            else
-                candidates.IntersectWith(withTag);
+            if (candidates is null) candidates = withTag;
+            else candidates.IntersectWith(withTag);
         }
 
-        if (candidates is null)
+        if (candidates is null) return;
+
+        if (_optionalIds.Length > 0)
         {
-            // No required types — shouldn't happen, but bail
-            return;
+            candidates.RemoveWhere(entity =>
+                !_optionalIds.Any(id => _data.TryGetValue(id, out var d) && d.ContainsKey(entity)));
         }
 
-        // Filter by WithAny: at least one optional type must be present
-        if (_optional.Count > 0)
+        foreach (var typeId in _excludedIds)
         {
-            candidates.RemoveWhere(entityId =>
-            {
-                foreach (var opt in _optional)
-                {
-                    if (_data.TryGetValue(opt.TypeName, out var dict) && dict.ContainsKey(entityId))
-                        return false; // keep — has at least one
-                }
-                return true; // remove — has none
-            });
+            if (_data.TryGetValue(typeId, out var byEntity)) candidates.ExceptWith(byEntity.Keys);
         }
 
-        // Filter by Without: exclude entities that have any excluded type
-        foreach (var excludedType in _excluded)
-        {
-            if (_data.TryGetValue(excludedType, out var dict))
-            {
-                candidates.ExceptWith(dict.Keys);
-            }
-        }
-
-        foreach (var entityId in candidates)
-        {
-            _matchedEntities.Add(new Entity(entityId));
-        }
+        foreach (var entity in candidates) _matched.Add(new Entity(entity));
     }
 
-    // ── Data access (called in OnUpdate) ─────────────────────
+    // ── Data access ─────────────────────────────────────────────
 
-    /// <summary>
-    /// All entities matching this query for the current tick.
-    /// </summary>
-    public IReadOnlyList<Entity> Entities => _matchedEntities;
+    /// <summary>Entities matching this query for the current tick.</summary>
+    public IReadOnlyList<Entity> Entities => _matched;
 
-    /// <summary>
-    /// Gets a component value for the given entity. Throws if not found.
-    /// </summary>
-    public T Get<T>(Entity entity) where T : IMessage<T>, new()
-    {
-        var typeName = ComponentTypeId.Of<T>().TypeName;
-        if (_data.TryGetValue(typeName, out var dict) && dict.TryGetValue(entity.Id, out var bytes))
-            return ProtoCodec.Decode<T>(bytes);
+    public T Get<T>(Entity entity) where T : IMessage<T>, new() =>
+        TryGet<T>(entity, out var component)
+            ? component
+            : throw new KeyNotFoundException(
+                $"Entity {entity.Id} has no {ComponentType<T>.Name} in this query.");
 
-        throw new KeyNotFoundException(
-            $"Entity {entity.Id} does not have component {typeName} in this query.");
-    }
-
-    /// <summary>
-    /// Tries to get a component value for the given entity.
-    /// </summary>
     public bool TryGet<T>(Entity entity, out T component) where T : IMessage<T>, new()
     {
-        var typeName = ComponentTypeId.Of<T>().TypeName;
-        if (_data.TryGetValue(typeName, out var dict) && dict.TryGetValue(entity.Id, out var bytes))
+        if (_bindings.TryGetId(ComponentType<T>.Name, out var typeId) &&
+            _data.TryGetValue(typeId, out var byEntity) &&
+            byEntity.TryGetValue(entity.Id, out var payload))
         {
-            component = ProtoCodec.Decode<T>(bytes);
+            component = new T();
+            component.MergeFrom(payload);
             return true;
         }
+
         component = default!;
         return false;
     }
 
-    /// <summary>
-    /// Checks if the given entity has the specified component in this query's data.
-    /// </summary>
-    public bool Has<T>(Entity entity) where T : IMessage<T>, new()
-    {
-        var typeName = ComponentTypeId.Of<T>().TypeName;
-        return _data.TryGetValue(typeName, out var dict) && dict.ContainsKey(entity.Id);
-    }
+    public bool Has<T>(Entity entity) where T : IMessage<T>, new() =>
+        _bindings.TryGetId(ComponentType<T>.Name, out var typeId) &&
+        _data.TryGetValue(typeId, out var byEntity) &&
+        byEntity.ContainsKey(entity.Id);
 
     /// <summary>
-    /// Buffers a component mutation. Throws if the component was declared ReadOnly.
+    /// Buffers a component write. Throws unless the type was declared with
+    /// <see cref="Query.Write{T}"/> — the client half of the borrow check, so a mistake
+    /// surfaces here rather than as a rejected result a network hop later.
     /// </summary>
     public void Set<T>(Entity entity, T component) where T : IMessage<T>, new()
     {
-        var typeName = ComponentTypeId.Of<T>().TypeName;
+        var typeId = _bindings.Require(ComponentType<T>.Name);
 
-        if (_readOnlyTypes.Contains(typeName))
+        if (!_writableTypes.Contains(typeId))
             throw new InvalidOperationException(
-                $"Cannot write to component {typeName} — it was declared as ReadOnly in this query.");
+                $"Cannot write {ComponentType<T>.Name}: this query declared it read-only.");
 
-        if (IsTagged(typeName))
-            throw new InvalidOperationException(
-                $"Cannot write to component {typeName} — it is only in this query through a tag join, which is read-only.");
-
-        if (!_mutations.TryGetValue(typeName, out var dict))
+        if (!_mutations.TryGetValue(typeId, out var byEntity))
         {
-            dict = new Dictionary<ulong, byte[]>();
-            _mutations[typeName] = dict;
+            byEntity = new Dictionary<ulong, byte[]>();
+            _mutations[typeId] = byEntity;
         }
-        dict[entity.Id] = component.ToByteArray();
+        byEntity[entity.Id] = component.ToByteArray();
     }
 
-    // ── Tag joins ───────────────────────────────────────────
+    // ── Tag joins ───────────────────────────────────────────────
+
+    /// <summary>The component types carrying <typeparamref name="TTag"/> this tick.</summary>
+    public IReadOnlyList<string> TaggedTypeNames<TTag>() where TTag : IMessage<TTag>, new()
+    {
+        if (!_bindings.TryGetId(ComponentType<TTag>.Name, out var tagId) ||
+            !_resolvedTags.TryGetValue(tagId, out var types))
+        {
+            return [];
+        }
+
+        return [.. types.Select(_bindings.NameOf)];
+    }
 
     /// <summary>
-    /// The component type names carrying <typeparamref name="TTag"/> this tick.
-    /// </summary>
-    public IReadOnlyList<string> TaggedTypeNames<TTag>() where TTag : IMessage<TTag>, new() =>
-        _resolvedTags.TryGetValue(ComponentTypeId.Of<TTag>().TypeName, out var types) ? types : [];
-
-    /// <summary>
-    /// The components on <paramref name="entity"/> whose type carries <typeparamref name="TTag"/>.
-    /// Values are raw because the concrete types are only known at runtime — use
-    /// <see cref="TaggedComponent.As{T}"/> once the type name identifies one you know.
+    /// The components on <paramref name="entity"/> whose type carries
+    /// <typeparamref name="TTag"/>. Payloads stay raw because the concrete types are only
+    /// known at runtime — decode one with <see cref="TaggedComponent.As{T}"/> once its
+    /// name identifies something you know.
     /// </summary>
     public IEnumerable<TaggedComponent> GetTagged<TTag>(Entity entity) where TTag : IMessage<TTag>, new()
     {
-        foreach (var typeName in TaggedTypeNames<TTag>())
+        if (!_bindings.TryGetId(ComponentType<TTag>.Name, out var tagId) ||
+            !_resolvedTags.TryGetValue(tagId, out var types))
         {
-            if (_data.TryGetValue(typeName, out var dict) && dict.TryGetValue(entity.Id, out var bytes))
-                yield return new TaggedComponent(typeName, bytes);
+            yield break;
+        }
+
+        foreach (var typeId in types)
+        {
+            if (_data.TryGetValue(typeId, out var byEntity) &&
+                byEntity.TryGetValue(entity.Id, out var payload))
+            {
+                yield return new TaggedComponent(_bindings.NameOf(typeId), payload);
+            }
         }
     }
 
-    private bool IsTagged(string typeName)
-    {
-        foreach (var (_, types) in _resolvedTags)
-        {
-            if (Array.IndexOf(types, typeName) >= 0 && !_allTypes.Contains(typeName))
-                return true;
-        }
-        return false;
-    }
-
-    // ── Each — tuple iteration ──────────────────────────────
+    // ── Tuple iteration ─────────────────────────────────────────
 
     public IEnumerable<(Entity Entity, T1 C1)> Each<T1>()
         where T1 : IMessage<T1>, new()
     {
-        foreach (var entity in _matchedEntities)
+        foreach (var entity in _matched)
         {
-            if (TryGet<T1>(entity, out var c1))
-                yield return (entity, c1);
+            if (TryGet<T1>(entity, out var c1)) yield return (entity, c1);
         }
     }
 
@@ -343,7 +325,7 @@ public class EntityQuery
         where T1 : IMessage<T1>, new()
         where T2 : IMessage<T2>, new()
     {
-        foreach (var entity in _matchedEntities)
+        foreach (var entity in _matched)
         {
             if (TryGet<T1>(entity, out var c1) && TryGet<T2>(entity, out var c2))
                 yield return (entity, c1, c2);
@@ -355,10 +337,13 @@ public class EntityQuery
         where T2 : IMessage<T2>, new()
         where T3 : IMessage<T3>, new()
     {
-        foreach (var entity in _matchedEntities)
+        foreach (var entity in _matched)
         {
-            if (TryGet<T1>(entity, out var c1) && TryGet<T2>(entity, out var c2) && TryGet<T3>(entity, out var c3))
+            if (TryGet<T1>(entity, out var c1) && TryGet<T2>(entity, out var c2) &&
+                TryGet<T3>(entity, out var c3))
+            {
                 yield return (entity, c1, c2, c3);
+            }
         }
     }
 
@@ -368,69 +353,57 @@ public class EntityQuery
         where T3 : IMessage<T3>, new()
         where T4 : IMessage<T4>, new()
     {
-        foreach (var entity in _matchedEntities)
+        foreach (var entity in _matched)
         {
             if (TryGet<T1>(entity, out var c1) && TryGet<T2>(entity, out var c2) &&
                 TryGet<T3>(entity, out var c3) && TryGet<T4>(entity, out var c4))
-                yield return (entity, c1, c2, c3, c4);
-        }
-    }
-
-    // ── Internal: flush mutations + descriptor ──────────────
-
-    internal List<ComponentChanges> FlushMutations()
-    {
-        var result = new List<ComponentChanges>();
-        foreach (var (compType, dict) in _mutations)
-        {
-            if (dict.Count == 0) continue;
-            result.Add(new ComponentChanges
             {
-                TickId = _tickId,
-                ComponentType = compType,
-                Entities = dict.Keys.ToArray(),
-                Data = MessagePackSerializer.Serialize(dict.Values.ToArray())
-            });
+                yield return (entity, c1, c2, c3, c4);
+            }
         }
-        _mutations.Clear();
-        return result;
     }
 
-    /// <summary>
-    /// Converts the builder state to a wire-format QueryDescriptor for registration.
-    /// </summary>
-    internal QueryDescriptor ToDescriptor()
+    // ── Flush ───────────────────────────────────────────────────
+
+    /// <summary>Encodes and clears the buffered writes for this tick's result.</summary>
+    internal List<ComponentBatch> FlushWrites()
     {
-        return new QueryDescriptor
+        var batches = new List<ComponentBatch>(_mutations.Count);
+
+        foreach (var (typeId, byEntity) in _mutations)
         {
-            RequiredTypes = _required.Select(a => a.TypeName).ToArray(),
-            OptionalTypes = _optional.Select(a => a.TypeName).ToArray(),
-            ExcludedTypes = _excluded.ToArray(),
-            ReadTypes = _required.Where(a => !a.IsReadWrite).Select(a => a.TypeName)
-                .Concat(_optional.Where(a => !a.IsReadWrite).Select(a => a.TypeName))
-                .Distinct().ToArray(),
-            WriteTypes = _required.Where(a => a.IsReadWrite).Select(a => a.TypeName)
-                .Concat(_optional.Where(a => a.IsReadWrite).Select(a => a.TypeName))
-                .Distinct().ToArray(),
-            TaggedTypes = _tags.Distinct().ToArray()
-        };
+            if (byEntity.Count == 0) continue;
+
+            batches.Add(ComponentBatchCodecs.Encode(new ComponentColumn(
+                typeId,
+                [.. byEntity.Keys],
+                [.. byEntity.Values])));
+        }
+
+        _mutations.Clear();
+        return batches;
     }
 
     private void ThrowIfFrozen()
     {
         if (_frozen)
             throw new InvalidOperationException(
-                "Cannot modify a query after its system has been added to a world.");
+                "Queries must be declared in the system constructor, before it joins a world.");
     }
 }
 
 /// <summary>
-/// A component matched through a tag join, identified by its type name because the
-/// concrete type is not known until the tick resolves.
+/// A component reached through a tag join, whose concrete type is only known at runtime.
 /// </summary>
-public readonly record struct TaggedComponent(string TypeName, byte[] Data)
+public readonly record struct TaggedComponent(string TypeName, byte[] Payload)
 {
-    public T As<T>() where T : IMessage<T>, new() => ProtoCodec.Decode<T>(Data);
+    /// <summary>Decodes the payload as <typeparamref name="T"/>, or null if it is a different type.</summary>
+    public T? As<T>() where T : class, IMessage<T>, new()
+    {
+        if (TypeName != ComponentType<T>.Name) return null;
 
-    public bool Is<T>() where T : IMessage<T>, new() => TypeName == ComponentTypeId.Of<T>().TypeName;
+        var component = new T();
+        component.MergeFrom(Payload);
+        return component;
+    }
 }

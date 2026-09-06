@@ -27,15 +27,17 @@ namespace Ecs.V1 {
             "ChZlY3MvdjEvY29tcG9uZW50LnByb3RvEgZlY3MudjEaGWdvb2dsZS9wcm90",
             "b2J1Zi9hbnkucHJvdG8aIGdvb2dsZS9wcm90b2J1Zi9kZXNjcmlwdG9yLnBy",
             "b3RvIiwKDUNvbXBvbmVudEluZm8SGwoJdHlwZV9uYW1lGAEgASgJUgh0eXBl",
-            "TmFtZSJBCg9Db21wb25lbnRTY2hlbWESLgoTZmlsZV9kZXNjcmlwdG9yX3Nl",
-            "dBgBIAEoDFIRZmlsZURlc2NyaXB0b3JTZXQ6WQoLZGVzY3JpcHRpb24SHy5n",
-            "b29nbGUucHJvdG9idWYuTWVzc2FnZU9wdGlvbnMY0IYDIAMoCzIULmdvb2ds",
-            "ZS5wcm90b2J1Zi5BbnlSC2Rlc2NyaXB0aW9uYgZwcm90bzM="));
+            "TmFtZSJ7Cg9Db21wb25lbnRTY2hlbWESLgoTZmlsZV9kZXNjcmlwdG9yX3Nl",
+            "dBgBIAEoDFIRZmlsZURlc2NyaXB0b3JTZXQSHwoLc2NoZW1hX2hhc2gYAiAB",
+            "KAZSCnNjaGVtYUhhc2gSFwoHdHlwZV9pZBgDIAEoDVIGdHlwZUlkOlkKC2Rl",
+            "c2NyaXB0aW9uEh8uZ29vZ2xlLnByb3RvYnVmLk1lc3NhZ2VPcHRpb25zGNCG",
+            "AyADKAsyFC5nb29nbGUucHJvdG9idWYuQW55UgtkZXNjcmlwdGlvbmIGcHJv",
+            "dG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, global::Google.Protobuf.Reflection.DescriptorReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, new pb::Extension[] { ComponentExtensions.Description }, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::Ecs.V1.ComponentInfo), global::Ecs.V1.ComponentInfo.Parser, new[]{ "TypeName" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Ecs.V1.ComponentSchema), global::Ecs.V1.ComponentSchema.Parser, new[]{ "FileDescriptorSet" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Ecs.V1.ComponentSchema), global::Ecs.V1.ComponentSchema.Parser, new[]{ "FileDescriptorSet", "SchemaHash", "TypeId" }, null, null, null, null)
           }));
     }
     #endregion
@@ -297,6 +299,8 @@ namespace Ecs.V1 {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public ComponentSchema(ComponentSchema other) : this() {
       fileDescriptorSet_ = other.fileDescriptorSet_;
+      schemaHash_ = other.schemaHash_;
+      typeId_ = other.typeId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -318,6 +322,38 @@ namespace Ecs.V1 {
       }
     }
 
+    /// <summary>Field number for the "schema_hash" field.</summary>
+    public const int SchemaHashFieldNumber = 2;
+    private ulong schemaHash_;
+    /// <summary>
+    /// Exact identity of the type's structure. See ecs.protocol.v1.ComponentTypeRef
+    /// for how it is derived.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong SchemaHash {
+      get { return schemaHash_; }
+      set {
+        schemaHash_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "type_id" field.</summary>
+    public const int TypeIdFieldNumber = 3;
+    private uint typeId_;
+    /// <summary>
+    /// The dense id the coordinator bound this type to, stable for the world's
+    /// lifetime. Zero on a type entity created before its schema was registered.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint TypeId {
+      get { return typeId_; }
+      set {
+        typeId_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -334,6 +370,8 @@ namespace Ecs.V1 {
         return true;
       }
       if (FileDescriptorSet != other.FileDescriptorSet) return false;
+      if (SchemaHash != other.SchemaHash) return false;
+      if (TypeId != other.TypeId) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -342,6 +380,8 @@ namespace Ecs.V1 {
     public override int GetHashCode() {
       int hash = 1;
       if (FileDescriptorSet.Length != 0) hash ^= FileDescriptorSet.GetHashCode();
+      if (SchemaHash != 0UL) hash ^= SchemaHash.GetHashCode();
+      if (TypeId != 0) hash ^= TypeId.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -364,6 +404,14 @@ namespace Ecs.V1 {
         output.WriteRawTag(10);
         output.WriteBytes(FileDescriptorSet);
       }
+      if (SchemaHash != 0UL) {
+        output.WriteRawTag(17);
+        output.WriteFixed64(SchemaHash);
+      }
+      if (TypeId != 0) {
+        output.WriteRawTag(24);
+        output.WriteUInt32(TypeId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -378,6 +426,14 @@ namespace Ecs.V1 {
         output.WriteRawTag(10);
         output.WriteBytes(FileDescriptorSet);
       }
+      if (SchemaHash != 0UL) {
+        output.WriteRawTag(17);
+        output.WriteFixed64(SchemaHash);
+      }
+      if (TypeId != 0) {
+        output.WriteRawTag(24);
+        output.WriteUInt32(TypeId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -390,6 +446,12 @@ namespace Ecs.V1 {
       int size = 0;
       if (FileDescriptorSet.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeBytesSize(FileDescriptorSet);
+      }
+      if (SchemaHash != 0UL) {
+        size += 1 + 8;
+      }
+      if (TypeId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(TypeId);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -405,6 +467,12 @@ namespace Ecs.V1 {
       }
       if (other.FileDescriptorSet.Length != 0) {
         FileDescriptorSet = other.FileDescriptorSet;
+      }
+      if (other.SchemaHash != 0UL) {
+        SchemaHash = other.SchemaHash;
+      }
+      if (other.TypeId != 0) {
+        TypeId = other.TypeId;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -429,6 +497,14 @@ namespace Ecs.V1 {
             FileDescriptorSet = input.ReadBytes();
             break;
           }
+          case 17: {
+            SchemaHash = input.ReadFixed64();
+            break;
+          }
+          case 24: {
+            TypeId = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -450,6 +526,14 @@ namespace Ecs.V1 {
             break;
           case 10: {
             FileDescriptorSet = input.ReadBytes();
+            break;
+          }
+          case 17: {
+            SchemaHash = input.ReadFixed64();
+            break;
+          }
+          case 24: {
+            TypeId = input.ReadUInt32();
             break;
           }
         }

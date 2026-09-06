@@ -10,8 +10,9 @@ const basePath = normalizeBasePath(process.env.BASE_PATH);
 
 const nats = await connectToNats();
 const broadcaster = new Broadcaster();
+const bridge = new EngineBridge(nats, broadcaster);
 
-const app = createApp({ nats, broadcaster, upgradeWebSocket });
+const app = createApp({ nats, broadcaster, bridge, upgradeWebSocket });
 
 // The built client is served from the same origin as the API, so the browser needs
 // no backend URL and there is nothing to inject at container start.
@@ -33,8 +34,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-await new EngineBridge(nats, broadcaster).run(shutdown.signal);
-
+await bridge.run(shutdown.signal);
 function normalizeBasePath(value: string | undefined): string {
   const trimmed = (value ?? "").replace(/^\/+|\/+$/g, "");
   return trimmed === "" ? "/" : `/${trimmed}`;

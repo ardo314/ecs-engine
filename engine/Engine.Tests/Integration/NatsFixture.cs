@@ -1,9 +1,6 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
 using Engine.Coordinator;
-using Engine.Core;
-using Engine.Core.Messages;
 using NATS.Client.Core;
 
 namespace Engine.Tests.Integration;
@@ -22,10 +19,10 @@ public class NatsFixture : IAsyncLifetime
 
     public string Url => _url;
     public bool Available => _available;
+    public SchemaRegistry Schemas { get; private set; } = null!;
     public SystemRegistry Registry { get; private set; } = null!;
     public WorldState World { get; private set; } = null!;
     public WatchManager WatchManager { get; private set; } = null!;
-    public ConcurrentQueue<EntitySpawnRequest> PendingSpawns { get; private set; } = null!;
     public NatsHandlers Handlers { get; private set; } = null!;
 
     public async Task<NatsConnection> ConnectAsync()
@@ -37,8 +34,6 @@ public class NatsFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Serialization.Initialize();
-
         // 1. Check NATS_URL env var (set in CI or docker-compose)
         var envUrl = Environment.GetEnvironmentVariable("NATS_URL");
         if (!string.IsNullOrEmpty(envUrl))
@@ -98,12 +93,12 @@ public class NatsFixture : IAsyncLifetime
 
         // Start a shared coordinator
         _coordNats = await ConnectAsync();
+        Schemas = new SchemaRegistry();
+        World = new WorldState(Schemas);
         Registry = new SystemRegistry();
-        World = new WorldState();
         WatchManager = new WatchManager();
-        PendingSpawns = new ConcurrentQueue<EntitySpawnRequest>();
 
-        Handlers = new NatsHandlers(_coordNats, Registry, World, WatchManager, PendingSpawns);
+        Handlers = new NatsHandlers(_coordNats, Schemas, Registry, World, WatchManager);
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => Handlers.StartAsync(_cts.Token));
         await Handlers.Ready;

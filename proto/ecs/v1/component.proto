@@ -24,4 +24,12 @@ message ComponentInfo {
 // never compiled against.
 message ComponentSchema {
   bytes file_descriptor_set = 1;
+
+  // Exact identity of the type's structure. See ecs.protocol.v1.ComponentTypeRef
+  // for how it is derived.
+  fixed64 schema_hash = 2;
+
+  // The dense id the coordinator bound this type to, stable for the world's
+  // lifetime. Zero on a type entity created before its schema was registered.
+  uint32 type_id = 3;
 }

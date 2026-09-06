@@ -15,12 +15,12 @@ public class SetControllerIOSystem : SystemBase
         _novaClient = novaClient;
 
         _q = NewQuery()
-            .With(Query.ReadOnly<NovaControllerId>())
-            .With(Query.ReadWrite<IoOutputState>())
+            .With(Query.Read<NovaControllerId>())
+            .With(Query.Write<IoOutputState>())
             .WithAny(
-                Query.ReadOnly<DigitalOutputRequest>(),
-                Query.ReadOnly<AnalogIntOutputRequest>(),
-                Query.ReadOnly<AnalogFloatOutputRequest>());
+                Query.Read<DigitalOutputRequest>(),
+                Query.Read<AnalogIntOutputRequest>(),
+                Query.Read<AnalogFloatOutputRequest>());
     }
 
     protected override async Task OnUpdateAsync()

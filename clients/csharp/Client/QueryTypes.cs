@@ -1,46 +1,77 @@
-using Ecs.V1;
+using Ecs.Protocol.V1;
 using Google.Protobuf;
 
 namespace Engine.Core;
 
 /// <summary>
-/// Describes access to a single component type — read-only or read-write.
-/// <see cref="Describe"/> replays the component type's own description commands.
+/// A component type a query touches, and how. Produced by <see cref="Query"/>.
 /// </summary>
+/// <remarks>
+/// This is the bridge between the two notions of typing. Authoring code writes
+/// <c>Query.Read&lt;Position&gt;()</c> and gets compile-time safety from the generated
+/// C# type; the SDK turns it into <c>{ component, schema_hash, access }</c>, which is
+/// all the world ever sees. Nothing needs the world to have compiled <c>Position</c>.
+/// </remarks>
 public readonly record struct ComponentAccess(
-    string TypeName,
-    bool IsReadWrite,
-    Action<EntityCommandBuffer>? Describe = null);
+    ComponentTypeRef Type,
+    Access Access,
+    ComponentTypeDeclaration Declaration)
+{
+    public string Name => Type.LogicalName;
+
+    public bool IsWrite => Access == Access.Write;
+}
 
 /// <summary>
-/// Static helpers for declaring component access in query builders.
+/// Declares component access in a query builder.
 /// </summary>
 public static class Query
 {
-    public static ComponentAccess ReadOnly<T>() where T : IMessage<T>, new() =>
-        new(ComponentTypeId.Of<T>().TypeName, IsReadWrite: false, Description<T>.Use);
+    /// <summary>Read-only access. Two systems reading the same type run in parallel.</summary>
+    public static ComponentAccess Read<T>() where T : IMessage<T>, new() =>
+        new(ComponentType<T>.Ref, Access.Read, ComponentType<T>.Declaration);
 
-    public static ComponentAccess ReadWrite<T>() where T : IMessage<T>, new() =>
-        new(ComponentTypeId.Of<T>().TypeName, IsReadWrite: true, Description<T>.Use);
+    /// <summary>
+    /// Read-write access. Conflicts with any other system reading or writing the type,
+    /// so the scheduler puts them in different stages.
+    /// </summary>
+    public static ComponentAccess Write<T>() where T : IMessage<T>, new() =>
+        new(ComponentType<T>.Ref, Access.Write, ComponentType<T>.Declaration);
 }
 
-internal static class Description<T> where T : IMessage<T>, new()
+/// <summary>
+/// The dense type ids the coordinator bound this process's schemas to.
+/// </summary>
+/// <remarks>
+/// Ids are assigned by the world, not chosen by the client, so they are only meaningful
+/// after the registration handshake. Everything on the wire after that point — queries,
+/// batches, leases — is expressed in them.
+/// </remarks>
+public sealed class SchemaBindings
 {
-    /// <summary>Emits the type's own description. Use <see cref="Use"/> to avoid repeats.</summary>
-    public static readonly Action<EntityCommandBuffer> Apply = commands =>
+    private readonly Dictionary<string, uint> _byName = new(StringComparer.Ordinal);
+    private readonly Dictionary<uint, string> _byId = new();
+
+    public void Add(string logicalName, uint typeId)
     {
-        var descriptor = ProtoType<T>.Descriptor;
-        var self = CommandTarget.OfComponentType(descriptor.FullName);
+        _byName[logicalName] = typeId;
+        _byId[typeId] = logicalName;
+    }
 
-        commands.AddComponent(self, new ComponentInfo { TypeName = descriptor.FullName });
-        commands.AddComponent(self, new ComponentSchema
-        {
-            FileDescriptorSet = ByteString.CopyFrom(ProtoCodec.FileDescriptorSetFor(descriptor))
-        });
+    public bool TryGetId(string logicalName, out uint typeId) =>
+        _byName.TryGetValue(logicalName, out typeId);
 
-        foreach (var (typeName, data) in ProtoCodec.DescriptionOf(descriptor))
-            commands.AddComponentRaw(self, typeName, data);
-    };
+    public uint Require(string logicalName) =>
+        _byName.TryGetValue(logicalName, out var typeId)
+            ? typeId
+            : throw new InvalidOperationException(
+                $"Component type '{logicalName}' has no id — its schema was never registered. " +
+                "Declare it in a query, or add a component of that type through a command buffer.");
 
-    public static readonly Action<EntityCommandBuffer> Use = commands => commands.Describe<T>();
+    public uint Require<T>() where T : IMessage<T>, new() => Require(ComponentType<T>.Name);
+
+    public string NameOf(uint typeId) =>
+        _byId.TryGetValue(typeId, out var name) ? name : $"<unbound:{typeId}>";
+
+    public int Count => _byName.Count;
 }

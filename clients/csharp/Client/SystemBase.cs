@@ -1,20 +1,26 @@
+using Ecs.Protocol.V1;
 using Engine.Core;
-using Engine.Core.Messages;
 
 namespace Client;
 
 /// <summary>
-/// Base class for ECS systems. Subclass this, declare queries in the constructor,
-/// and implement OnUpdateAsync to process entities each tick.
+/// Base class for ECS systems. Subclass it, declare queries in the constructor, and
+/// implement <see cref="OnUpdateAsync"/>.
 /// </summary>
+/// <remarks>
+/// A system declares its access up front and gets nothing it did not ask for. That is
+/// what lets the coordinator schedule it: two systems that only read the same types run
+/// in parallel, anything else is serialised, and neither system had to know the other
+/// exists.
+/// </remarks>
 public abstract class SystemBase
 {
     private readonly List<EntityQuery> _queries = new();
     private bool _queriesFrozen;
 
     /// <summary>
-    /// The system name used for registration. Derived from the class name
-    /// with a trailing "System" suffix stripped (e.g. MovementSystem → Movement).
+    /// The registration name, derived from the class name with a trailing "System"
+    /// stripped — <c>MovementSystem</c> becomes <c>Movement</c>.
     /// </summary>
     public string SystemName { get; }
 
@@ -26,31 +32,27 @@ public abstract class SystemBase
             : name;
     }
 
-    /// <summary>
-    /// Delta time for the current tick (seconds).
-    /// </summary>
+    /// <summary>Seconds covered by the current tick, as told by the invocation.</summary>
     protected internal float DeltaTime { get; internal set; }
 
-    /// <summary>
-    /// The current tick identifier.
-    /// </summary>
+    /// <summary>The tick this invocation's lease is scoped to.</summary>
     protected internal ulong TickId { get; internal set; }
 
     /// <summary>
-    /// Command buffer for structural changes (create/destroy entities, add/remove components).
-    /// Available in both OnAdd and OnUpdateAsync.
+    /// Structural changes. Buffered here and applied by the coordinator at its next
+    /// synchronisation point, never while a system is iterating.
     /// </summary>
     protected internal EntityCommandBuffer Commands { get; } = new();
 
     /// <summary>
-    /// Creates a new EntityQuery and registers it with this system.
-    /// Call in the constructor; chain With/WithAny/Without to configure.
+    /// Declares a query. Call this in the constructor so query fields can be
+    /// <c>readonly</c>; it throws once the system has joined a world.
     /// </summary>
     protected EntityQuery NewQuery()
     {
         if (_queriesFrozen)
             throw new InvalidOperationException(
-                $"System '{SystemName}' cannot declare queries after being added to a world. " +
+                $"System '{SystemName}' cannot declare queries after joining a world. " +
                 "Declare them in the constructor.");
 
         var query = new EntityQuery();
@@ -59,33 +61,26 @@ public abstract class SystemBase
     }
 
     /// <summary>
-    /// Called when the system is added to a world, before its tick loop starts.
-    /// Buffer initial commands and acquire world-scoped resources here.
+    /// Called when the system joins a world, before its tick loop starts. Buffer seed
+    /// commands and acquire world-scoped resources here. May fire more than once on the
+    /// same instance, so keep it idempotent.
     /// </summary>
     protected virtual void OnAdd() { }
 
-    /// <summary>
-    /// Called every tick. Process entities via your queries here.
-    /// </summary>
+    /// <summary>Called once per tick, over the slice the lease covers.</summary>
     protected abstract Task OnUpdateAsync();
 
-    /// <summary>
-    /// Called when the system is removed from a world. Release resources here.
-    /// </summary>
+    /// <summary>Called when the system leaves a world.</summary>
     protected virtual void OnRemove() { }
 
-    // ── Internal plumbing (used by SystemRunner) ────────────
+    // ── Internal plumbing ───────────────────────────────────────
 
     internal void InvokeOnAdd()
     {
-        // Queries are declared once in the constructor, so freezing is idempotent
-        // and the same instance can be removed from a world and added again.
+        // Queries are declared once in the constructor, so freezing is idempotent and the
+        // same instance can leave a world and rejoin it.
         _queriesFrozen = true;
-        foreach (var q in _queries)
-        {
-            q.Freeze();
-            q.Describe(Commands);
-        }
+        foreach (var query in _queries) query.Freeze();
 
         OnAdd();
     }
@@ -96,18 +91,20 @@ public abstract class SystemBase
 
     internal IReadOnlyList<EntityQuery> GetQueries() => _queries;
 
-    internal QueryDescriptor[] GetQueryDescriptors() =>
-        _queries.Select(q => q.ToDescriptor()).ToArray();
+    /// <summary>Every schema this system needs the coordinator to bind before it runs.</summary>
+    internal IEnumerable<ComponentTypeDeclaration> Declarations() =>
+        _queries.SelectMany(q => q.Declarations()).Concat(Commands.Schemas);
 
-    /// <summary>
-    /// Union of all read types across all queries (for conflict detection / staging).
-    /// </summary>
-    internal string[] GetAllReadTypes() =>
-        _queries.SelectMany(q => q.ToDescriptor().ReadTypes).Distinct().ToArray();
+    internal void BindQueries(SchemaBindings bindings)
+    {
+        foreach (var query in _queries) query.Bind(bindings);
+    }
 
-    /// <summary>
-    /// Union of all write types across all queries (for conflict detection / staging).
-    /// </summary>
-    internal string[] GetAllWriteTypes() =>
-        _queries.SelectMany(q => q.ToDescriptor().WriteTypes).Distinct().ToArray();
+    internal QueryDescriptor[] QueryDescriptors() => [.. _queries.Select(q => q.ToDescriptor())];
+
+    internal IEnumerable<string> ReadNames() =>
+        _queries.SelectMany(q => q.ReadNames()).Distinct(StringComparer.Ordinal);
+
+    internal IEnumerable<string> WriteNames() =>
+        _queries.SelectMany(q => q.WriteNames()).Distinct(StringComparer.Ordinal);
 }

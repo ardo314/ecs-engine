@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package ecs.protocol.v1;
+
+// Identity of a component type as it travels on the wire, before the coordinator
+// has bound it to a dense id.
+//
+// `schema_hash` is the exact identity of the type's structure. It is a truncation
+// of SHA-256 over a canonical textual rendering of the message and every message
+// and enum it transitively references, so any language that can read a
+// FileDescriptorSet can reproduce it. The rendering is:
+//
+//   message <full_name>\n
+//   field <number> <name> <label> <type> [<type_name>]\n   (fields ascending by number)
+//   oneof <index> <name>\n                                 (oneofs ascending by index)
+//   enum <full_name>\n
+//   value <number> <name>\n                                (values ascending by number)
+//
+// Referenced types are emitted after the root, once each, ordered by full name.
+// The first eight bytes of the digest are read big-endian.
+//
+// The coordinator requires an exact match. Compatible schema evolution is
+// deliberately not modelled — a changed schema is a different type until there is
+// a concrete need for anything cleverer.
+message ComponentTypeRef {
+  // Protobuf full name, e.g. "movement.v1.Position".
+  string logical_name = 1;
+  fixed64 schema_hash = 2;
+}
+
+// An encoded component payload tagged with the type it belongs to. Used wherever
+// a message carries components the coordinator has not yet bound to a dense id.
+message ComponentValue {
+  ComponentTypeRef type = 1;
+  bytes payload = 2;
+}
+
+// A component type announcing its schema so the coordinator can bind it to a
+// dense id and validate payloads against it at runtime.
+message ComponentTypeDeclaration {
+  ComponentTypeRef type = 1;
+
+  // The transitively closed FileDescriptorSet for the type's own file. This is
+  // what lets the coordinator reason about a type it was never compiled against.
+  bytes file_descriptor_set = 2;
+
+  // Components the type declares for its own type entity through the
+  // `ecs.v1.description` message option. Each is applied as an ordinary
+  // AddComponent on the type entity.
+  repeated ComponentValue description = 3;
+}
+
+message RegisterSchemasRequest {
+  repeated ComponentTypeDeclaration declarations = 1;
+}
+
+message RegisterSchemasResponse {
+  repeated SchemaBinding bindings = 1;
+  repeated SchemaRejection rejections = 2;
+}
+
+// The coordinator's dense id for an accepted component type. Ids are assigned in
+// registration order and are stable for the lifetime of the world.
+message SchemaBinding {
+  ComponentTypeRef type = 1;
+  uint32 type_id = 2;
+}
+
+message SchemaRejection {
+  ComponentTypeRef type = 1;
+  SchemaRejectionReason reason = 2;
+
+  // The hash already bound to `type.logical_name`, when the reason is a mismatch.
+  fixed64 registered_schema_hash = 3;
+  string detail = 4;
+}
+
+enum SchemaRejectionReason {
+  SCHEMA_REJECTION_REASON_UNSPECIFIED = 0;
+
+  // The logical name is already bound to a different schema hash.
+  SCHEMA_REJECTION_REASON_HASH_MISMATCH = 1;
+
+  // The FileDescriptorSet was unreadable, incomplete, or did not contain the
+  // declared logical name.
+  SCHEMA_REJECTION_REASON_INVALID_DESCRIPTOR = 2;
+
+  // The declared hash does not match the descriptors that came with it.
+  SCHEMA_REJECTION_REASON_HASH_NOT_DERIVED_FROM_DESCRIPTOR = 3;
+}

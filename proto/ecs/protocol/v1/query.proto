@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package ecs.protocol.v1;
+
+// How a system touches a component type. This is the whole of what the scheduler
+// needs to know about a component — it never learns what the type means.
+enum Access {
+  ACCESS_UNSPECIFIED = 0;
+  ACCESS_READ = 1;
+  ACCESS_WRITE = 2;
+}
+
+// One component type a query touches, addressed by the dense id the coordinator
+// bound during schema registration.
+message ComponentAccess {
+  uint32 type_id = 1;
+  Access access = 2;
+}
+
+// A join through the type system: an entity matches when it carries at least one
+// component whose *type entity* carries `tag_type_id`. The set of matching types
+// is resolved by the coordinator every tick, so types registered later are picked
+// up without the system changing. Tag joins are read-only.
+message TaggedAccess {
+  uint32 tag_type_id = 1;
+}
+
+message QueryDescriptor {
+  // The entity must carry all of these.
+  repeated ComponentAccess required = 1;
+
+  // The entity must carry at least one of these, when any are given.
+  repeated ComponentAccess optional = 2;
+
+  // The entity must carry none of these.
+  repeated uint32 excluded = 3;
+
+  repeated TaggedAccess tagged = 4;
+}
+
+message SystemRegistration {
+  // Logical name. Instances sharing a name form one NATS queue group and are
+  // scheduled as a single system.
+  string name = 1;
+  string instance_id = 2;
+  repeated QueryDescriptor queries = 3;
+}
+
+message SystemUnregistration {
+  string name = 1;
+  string instance_id = 2;
+}

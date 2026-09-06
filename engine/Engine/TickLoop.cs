@@ -1,347 +1,380 @@
-using System.Collections.Concurrent;
-using Engine.Core;
-using Engine.Core.Messages;
-using MessagePack;
+using Ecs.Protocol;
+using Ecs.Protocol.V1;
+using Google.Protobuf;
 using NATS.Client.Core;
 
 namespace Engine.Coordinator;
 
 /// <summary>
-/// Runs the fixed-timestep tick loop: processes spawns, schedules systems, collects mutations.
+/// The fixed-timestep tick loop: apply structural commands, schedule each stage under
+/// tick-scoped leases, check what comes back, push watch data.
 /// </summary>
-public class TickLoop
+public sealed class TickLoop
 {
+    private static readonly TimeSpan StageDeadline = TimeSpan.FromSeconds(5);
+
     private readonly NatsConnection _nats;
+    private readonly SchemaRegistry _schemas;
+    private readonly SystemRegistry _systems;
     private readonly WorldState _world;
-    private readonly SystemRegistry _registry;
-    private readonly WatchManager _watchManager;
+    private readonly WatchManager _watches;
     private readonly NatsHandlers _handlers;
-    private readonly ConcurrentQueue<EntitySpawnRequest> _pendingSpawns;
+    private readonly CommandApplier _commands;
+    private readonly LeaseManager _leases = new();
     private readonly int _tickRate;
 
     public TickLoop(
         NatsConnection nats,
+        SchemaRegistry schemas,
+        SystemRegistry systems,
         WorldState world,
-        SystemRegistry registry,
-        WatchManager watchManager,
+        WatchManager watches,
         NatsHandlers handlers,
-        ConcurrentQueue<EntitySpawnRequest> pendingSpawns,
         int tickRate)
     {
         _nats = nats;
+        _schemas = schemas;
+        _systems = systems;
         _world = world;
-        _registry = registry;
-        _watchManager = watchManager;
+        _watches = watches;
         _handlers = handlers;
-        _pendingSpawns = pendingSpawns;
+        _commands = new CommandApplier(world, schemas);
         _tickRate = tickRate;
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        var tickInterval = TimeSpan.FromMilliseconds(1000.0 / _tickRate);
-        ulong tickId = 0;
+        var interval = TimeSpan.FromMilliseconds(1000.0 / _tickRate);
+        var delta = (float)interval.TotalSeconds;
+        ulong tick = 0;
 
-        Console.WriteLine($"[Coordinator] Starting tick loop at {_tickRate} Hz ({tickInterval.TotalMilliseconds:F1}ms interval)");
+        Console.WriteLine(
+            $"[Coordinator] Tick loop running at {_tickRate} Hz ({interval.TotalMilliseconds:F1} ms).");
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var tickStart = DateTime.UtcNow;
-            tickId++;
+            var startedAt = DateTime.UtcNow;
+            tick++;
 
-            await ProcessPendingStructuralChanges(tickId, cancellationToken);
+            Synchronise();
 
-            var stages = _registry.ComputeStages(_world.ResolveTaggedTypes(
-                _registry.GetUniqueSystems().SelectMany(s => s.GetAllTags())));
+            var tags = _world.ResolveTags(_systems.UniqueSystems().SelectMany(SystemRegistry.TagsOf));
+            foreach (var stage in _systems.ComputeStages(tags))
+                await ExecuteStage(stage, tick, delta, tags, cancellationToken);
 
-            for (var stageIdx = 0; stageIdx < stages.Count; stageIdx++)
+            await PushWatchData(tick, cancellationToken);
+
+            if (tick % 100 == 0)
             {
-                await ExecuteStage(stages[stageIdx], stageIdx, tickId, cancellationToken);
+                Console.WriteLine(
+                    $"[Coordinator] Tick {tick}: {_world.EntityCount} entities, " +
+                    $"{_systems.SystemNames().Count} systems, {_schemas.All().Count} types.");
             }
 
-            if (tickId % 100 == 0)
-            {
-                Console.WriteLine($"[Coordinator] Tick {tickId} complete. Entities: {_world.EntityCount}, Systems: {_registry.GetSystemNames().Count}");
-            }
+            var remaining = interval - (DateTime.UtcNow - startedAt);
+            if (remaining <= TimeSpan.Zero) continue;
 
-            await PushWatchData(tickId, cancellationToken);
-
-            var elapsed = DateTime.UtcNow - tickStart;
-            var sleepTime = tickInterval - elapsed;
-            if (sleepTime > TimeSpan.Zero)
-            {
-                try { await Task.Delay(sleepTime, cancellationToken); }
-                catch (OperationCanceledException) { break; }
-            }
+            try { await Task.Delay(remaining, cancellationToken); }
+            catch (OperationCanceledException) { break; }
         }
 
-        Console.WriteLine($"[Coordinator] Shutting down after {tickId} ticks.");
+        Console.WriteLine($"[Coordinator] Stopped after {tick} ticks.");
     }
 
-    private async Task ProcessPendingStructuralChanges(ulong tickId, CancellationToken cancellationToken)
+    /// <summary>
+    /// The deterministic point at which the world's topology may change. Everything
+    /// buffered since the last tick lands here, together, before any system runs.
+    /// </summary>
+    private void Synchronise()
     {
-        // Spawns
-        while (_pendingSpawns.TryDequeue(out var spawnReq))
-        {
-            var entityId = _world.AllocateEntity();
-            for (var i = 0; i < spawnReq.ComponentTypes.Length && i < spawnReq.ComponentData.Length; i++)
-            {
-                _world.SetComponent(entityId, spawnReq.ComponentTypes[i], spawnReq.ComponentData[i]);
-            }
+        // Every registered type gets an entity to hang its description off, so a type
+        // with no description still shows up in tag joins and in the editor.
+        foreach (var type in _schemas.All())
+            _world.GetOrCreateTypeEntity(type);
 
-            var created = new EntityCreated { EntityId = entityId, ComponentTypes = spawnReq.ComponentTypes };
-            await _nats.PublishAsync("engine.entity.create", MessagePackSerializer.Serialize(created), cancellationToken: cancellationToken);
+        _commands.Apply(_handlers.DrainCommands());
+    }
+
+    private async Task ExecuteStage(
+        List<SystemRegistration> stage,
+        ulong tick,
+        float delta,
+        IReadOnlyDictionary<uint, uint[]> tags,
+        CancellationToken cancellationToken)
+    {
+        var outstanding = new Dictionary<string, Lease>(StringComparer.Ordinal);
+
+        foreach (var system in stage)
+        {
+            if (Invoke(system, tick, delta, tags) is not { } invocation) continue;
+
+            outstanding[invocation.Lease.Id] = invocation.Lease;
+            await _nats.PublishAsync(
+                Subjects.SystemInvoke(system.Name),
+                invocation.Message.ToByteArray(),
+                cancellationToken: cancellationToken);
         }
 
-        // Destroys
-        while (_handlers.PendingDestroys.TryDequeue(out var destroyReq))
+        if (outstanding.Count == 0) return;
+
+        await CollectResults(outstanding, tick, cancellationToken);
+
+        // Whatever did not come back in time loses its claim. A worker that returns tick
+        // N's writes during tick N+2 must not be able to land them.
+        var abandoned = _leases.RetireThrough(tick);
+        if (abandoned > 0)
         {
-            foreach (var entityId in destroyReq.EntityIds)
-            {
-                if (_world.IsAlive(entityId))
-                {
-                    _world.DestroyEntity(entityId);
-                    var destroyed = new EntityDestroyed { EntityId = entityId };
-                    await _nats.PublishAsync("engine.entity.destroyed", MessagePackSerializer.Serialize(destroyed), cancellationToken: cancellationToken);
-                }
-            }
+            Console.WriteLine(
+                $"[Coordinator] Tick {tick}: {abandoned} lease(s) expired without a result.");
+        }
+    }
+
+    private sealed record Invocation(Lease Lease, SystemInvocation Message);
+
+    private Invocation? Invoke(
+        SystemRegistration system,
+        ulong tick,
+        float delta,
+        IReadOnlyDictionary<uint, uint[]> tags)
+    {
+        var entities = _world.MatchQueries(system.Queries, tags);
+        if (entities.Count == 0) return null;
+
+        var writable = SystemRegistry.WritesOf(system);
+        var lease = _leases.Issue(tick, system.Name, entities, writable);
+
+        var message = new SystemInvocation
+        {
+            Tick = tick,
+            LeaseId = lease.Id,
+            DeltaSeconds = delta,
+        };
+        message.Entities.AddRange(entities);
+        message.Writable.AddRange(writable);
+
+        foreach (var (tagTypeId, typeIds) in TagsFor(system, tags))
+        {
+            var resolution = new TagResolution { TagTypeId = tagTypeId };
+            resolution.TypeIds.AddRange(typeIds);
+            message.Tags.Add(resolution);
         }
 
-        // Component adds
-        while (_handlers.PendingAdds.TryDequeue(out var addReq))
+        foreach (var typeId in ColumnsFor(system, tags))
         {
-            if (ResolveTarget(addReq.Target) is { } addTarget)
-            {
-                _world.SetComponent(addTarget, addReq.ComponentType, addReq.Data);
-            }
+            var rows = new byte[entities.Count][];
+            for (var i = 0; i < entities.Count; i++)
+                rows[i] = _world.GetComponent(entities[i], typeId)!;
+
+            message.Components.Add(
+                ComponentBatchCodecs.Encode(new ComponentColumn(typeId, entities, rows)));
         }
 
-        // Component removes
-        while (_handlers.PendingRemoves.TryDequeue(out var removeReq))
+        return new Invocation(lease, message);
+    }
+
+    /// <summary>
+    /// Every type the system needs to evaluate its queries locally — including excluded
+    /// types, which it must be able to see in order to filter them out.
+    /// </summary>
+    private static HashSet<uint> ColumnsFor(
+        SystemRegistration system,
+        IReadOnlyDictionary<uint, uint[]> tags)
+    {
+        var types = new HashSet<uint>();
+        foreach (var query in system.Queries)
         {
-            if (ResolveTarget(removeReq.Target) is { } removeTarget)
+            foreach (var access in query.Required) types.Add(access.TypeId);
+            foreach (var access in query.Optional) types.Add(access.TypeId);
+            foreach (var excluded in query.Excluded) types.Add(excluded);
+            foreach (var tagged in query.Tagged)
             {
-                _world.RemoveComponent(removeTarget, removeReq.ComponentType);
+                if (tags.TryGetValue(tagged.TagTypeId, out var resolved))
+                    types.UnionWith(resolved);
             }
+        }
+        return types;
+    }
+
+    private static Dictionary<uint, uint[]> TagsFor(
+        SystemRegistration system,
+        IReadOnlyDictionary<uint, uint[]> tags)
+    {
+        var result = new Dictionary<uint, uint[]>();
+        foreach (var tag in SystemRegistry.TagsOf(system))
+            result[tag] = tags.TryGetValue(tag, out var resolved) ? resolved : [];
+        return result;
+    }
+
+    private async Task CollectResults(
+        Dictionary<string, Lease> outstanding,
+        ulong tick,
+        CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(StageDeadline);
+
+        try
+        {
+            while (outstanding.Count > 0)
+            {
+                var result = await _handlers.Results.ReadAsync(deadline.Token);
+                if (outstanding.Remove(result.LeaseId))
+                    await ApplyResult(result, cancellationToken);
+                else
+                    await Reject(result, ResultRejectionReason.UnknownLease,
+                        "Lease is not outstanding for the current stage.", cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            Console.WriteLine(
+                $"[Coordinator] Tick {tick}: {outstanding.Count} system(s) missed the deadline " +
+                $"({string.Join(", ", outstanding.Values.Select(l => l.SystemName))}).");
         }
     }
 
     /// <summary>
-    /// Resolves a command target to an entity id. Component type targets are created on first use.
+    /// Checks a result against its lease, then applies it.
     /// </summary>
-    private ulong? ResolveTarget(CommandTarget target)
+    /// <remarks>
+    /// Every condition the plan asks for is enforced here: the lease is live and
+    /// single-use, the tick matches, the system only writes types it holds a write lease
+    /// for, the entities are inside its assigned slice, the type is registered, and the
+    /// payload actually parses as that schema. A result that fails any of them is
+    /// refused whole rather than partially applied.
+    /// </remarks>
+    private async Task ApplyResult(SystemResult result, CancellationToken cancellationToken)
     {
-        if (target.ComponentType is { Length: > 0 } typeName)
-            return _world.GetOrCreateTypeEntity(typeName);
-
-        return _world.IsAlive(target.EntityId) ? target.EntityId : null;
-    }
-
-    private async Task ExecuteStage(List<SystemDescriptor> stage, int stageIdx, ulong tickId, CancellationToken cancellationToken)
-    {
-        if (stage.Count == 0)
-            return;
-
-        // Subscribe to ack and mutation channels BEFORE sending schedule/shards.
-        // Systems publish mutations then ack, so subscriptions must be active
-        // before the system even receives its schedule to avoid a race.
-        var ackSub = await _nats.SubscribeCoreAsync<byte[]>("engine.coord.tick.done", cancellationToken: cancellationToken);
-        var changeSubs = new Dictionary<string, INatsSub<byte[]>>();
-        foreach (var sys in stage)
+        if (!_leases.TryClaim(result.LeaseId, result.Tick, out var lease, out var reason))
         {
-            var sub = await _nats.SubscribeCoreAsync<byte[]>($"engine.component.changed.{sys.Name}", cancellationToken: cancellationToken);
-            changeSubs[sys.Name] = sub;
-        }
-
-        // Now send schedule + shards to each system
-        var systemsScheduled = 0;
-        foreach (var sys in stage)
-        {
-            // Use multi-query matching: entities that match ANY of the system's queries
-            var queries = sys.Queries;
-            List<ulong> matchingEntities;
-            HashSet<string> allTypes;
-            var taggedTypes = _world.ResolveTaggedTypes(sys.GetAllTags());
-
-            if (queries.Length > 0)
-            {
-                matchingEntities = _world.GetEntitiesMatchingQueries(queries, taggedTypes);
-                allTypes = new HashSet<string>();
-                foreach (var q in queries)
-                {
-                    foreach (var t in q.RequiredTypes) allTypes.Add(t);
-                    foreach (var t in q.OptionalTypes) allTypes.Add(t);
-                    // Include excluded types so the client can filter
-                    foreach (var t in q.ExcludedTypes) allTypes.Add(t);
-                    foreach (var tag in q.TaggedTypes)
-                    {
-                        foreach (var t in taggedTypes[tag]) allTypes.Add(t);
-                    }
-                }
-            }
-            else
-            {
-                // Fallback: no queries defined (shouldn't happen with new API)
-                allTypes = new HashSet<string>(sys.GetAllReads().Concat(sys.GetAllWrites()).Distinct());
-                matchingEntities = _world.GetEntitiesWith(allTypes.ToList());
-            }
-
-            if (matchingEntities.Count == 0)
-                continue;
-
-            systemsScheduled++;
-            var entityArray = matchingEntities.ToArray();
-
-            var schedule = new SystemSchedule
-            {
-                TickId = tickId,
-                ShardCount = allTypes.Count,
-                TaggedTypes = taggedTypes
-            };
-            await _nats.PublishAsync(
-                $"engine.system.schedule.{sys.Name}",
-                MessagePackSerializer.Serialize(schedule),
-                cancellationToken: cancellationToken);
-
-            foreach (var compType in allTypes)
-            {
-                // null means "absent" — an empty protobuf message is zero bytes, so length can't say.
-                var dataChunks = new List<byte[]?>();
-                foreach (var eid in entityArray)
-                {
-                    dataChunks.Add(_world.GetComponent(eid, compType));
-                }
-
-                var shard = new ComponentShard
-                {
-                    TickId = tickId,
-                    Entities = entityArray,
-                    ComponentType = compType,
-                    Data = MessagePackSerializer.Serialize(dataChunks.ToArray())
-                };
-                await _nats.PublishAsync(
-                    $"engine.component.set.{sys.Name}",
-                    MessagePackSerializer.Serialize(shard),
-                    cancellationToken: cancellationToken);
-            }
-        }
-
-        // If no systems had matching entities, clean up subscriptions and bail
-        if (systemsScheduled == 0)
-        {
-            await ackSub.UnsubscribeAsync();
-            foreach (var sub in changeSubs.Values)
-                await sub.UnsubscribeAsync();
+            await Reject(result, reason, "Lease is no longer valid for this tick.", cancellationToken);
             return;
         }
 
-        // Wait for acks from all scheduled systems
-        var receivedAcks = new HashSet<string>();
-        var ackDeadline = DateTime.UtcNow.AddSeconds(5);
+        var columns = new List<ComponentColumn>(result.Writes.Count);
 
-        try
+        foreach (var batch in result.Writes)
         {
-            while (receivedAcks.Count < systemsScheduled && DateTime.UtcNow < ackDeadline)
+            if (!lease.Writable.Contains(batch.TypeId))
             {
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeoutCts.CancelAfter(ackDeadline - DateTime.UtcNow);
-
-                try
-                {
-                    await foreach (var ackMsg in ackSub.Msgs.ReadAllAsync(timeoutCts.Token))
-                    {
-                        var ack = MessagePackSerializer.Deserialize<TickAck>(ackMsg.Data!);
-                        if (ack.TickId == tickId)
-                        {
-                            receivedAcks.Add(ack.InstanceId);
-                        }
-                        if (receivedAcks.Count >= systemsScheduled)
-                            break;
-                    }
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    // Timeout waiting for acks
-                }
-                break;
+                await Reject(result, ResultRejectionReason.NotWritable,
+                    $"No write lease for type id {batch.TypeId} ({_schemas.NameOf(batch.TypeId)}).",
+                    cancellationToken);
+                return;
             }
-        }
-        finally
-        {
-            await ackSub.UnsubscribeAsync();
-        }
 
-        if (receivedAcks.Count < systemsScheduled)
-        {
-            Console.WriteLine($"[Coordinator] Tick {tickId} stage {stageIdx}: timeout waiting for acks ({receivedAcks.Count}/{systemsScheduled})");
-        }
+            if (!_schemas.TryGet(batch.TypeId, out var type))
+            {
+                await Reject(result, ResultRejectionReason.UnknownType,
+                    $"Type id {batch.TypeId} is not registered.", cancellationToken);
+                return;
+            }
 
-        // Collect mutations from the pre-subscribed channels
-        foreach (var sys in stage)
-        {
-            var changesSub = changeSubs[sys.Name];
-            using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            drainCts.CancelAfter(100);
-
+            ComponentColumn column;
             try
             {
-                await foreach (var changeMsg in changesSub.Msgs.ReadAllAsync(drainCts.Token))
-                {
-                    var changes = MessagePackSerializer.Deserialize<ComponentChanges>(changeMsg.Data!);
-                    if (changes.TickId != tickId) continue;
+                column = ComponentBatchCodecs.Decode(batch);
+            }
+            catch (NotSupportedException ex)
+            {
+                await Reject(result, ResultRejectionReason.PayloadInvalid, ex.Message, cancellationToken);
+                return;
+            }
 
-                    var entityData = MessagePackSerializer.Deserialize<byte[][]>(changes.Data);
-                    for (var i = 0; i < changes.Entities.Length && i < entityData.Length; i++)
-                    {
-                        _world.SetComponent(changes.Entities[i], changes.ComponentType, entityData[i]);
-                    }
+            for (var i = 0; i < column.Count; i++)
+            {
+                var entity = column.Entities[i];
+                if (!lease.Entities.Contains(entity))
+                {
+                    await Reject(result, ResultRejectionReason.EntityOutOfSlice,
+                        $"Entity {entity} is not in the slice leased to '{lease.SystemName}'.",
+                        cancellationToken);
+                    return;
+                }
+
+                var payload = column.Rows[i];
+                if (payload is null) continue;
+
+                if (!PayloadValidator.IsValid(type.Descriptor, payload, out var error))
+                {
+                    await Reject(result, ResultRejectionReason.PayloadInvalid, error, cancellationToken);
+                    return;
                 }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+
+            columns.Add(column);
+        }
+
+        foreach (var column in columns)
+        {
+            for (var i = 0; i < column.Count; i++)
             {
-                // Done draining
-            }
-            finally
-            {
-                await changesSub.UnsubscribeAsync();
+                var payload = column.Rows[i];
+                if (payload is null) continue;
+
+                // A destroy from an earlier tick can have removed the entity in between.
+                if (_world.IsAlive(column.Entities[i]))
+                    _world.SetComponent(column.Entities[i], column.TypeId, payload);
             }
         }
+
+        // Structural changes wait for the next synchronisation point.
+        _handlers.EnqueueCommands(result.Commands);
     }
 
-    private async Task PushWatchData(ulong tickId, CancellationToken cancellationToken)
+    private async Task Reject(
+        SystemResult result,
+        ResultRejectionReason reason,
+        string detail,
+        CancellationToken cancellationToken)
     {
-        var watches = _watchManager.GetActiveWatches();
-        if (watches.Count == 0)
-            return;
+        Console.WriteLine($"[Coordinator] Refused result from '{result.InstanceId}': {reason} — {detail}");
+
+        if (string.IsNullOrEmpty(result.InstanceId)) return;
+
+        var message = new ResultRejected
+        {
+            Tick = result.Tick,
+            LeaseId = result.LeaseId,
+            Reason = reason,
+            Detail = detail,
+        };
+
+        await _nats.PublishAsync(
+            Subjects.SystemRejected(result.InstanceId),
+            message.ToByteArray(),
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task PushWatchData(ulong tick, CancellationToken cancellationToken)
+    {
+        var watches = _watches.ActiveWatches();
+        if (watches.Count == 0) return;
+
+        var schemaVersion = _schemas.Version;
 
         foreach (var watch in watches)
         {
-            var data = new WatchData
-            {
-                WatchId = watch.WatchId,
-                TickId = tickId
-            };
+            var data = new WatchData { WatchId = watch.WatchId, Tick = tick };
 
-            if (_watchManager.ShouldIncludeSystems(watch))
+            if (_watches.ClaimSystems(watch))
             {
-                var sysResponse = _handlers.BuildSystemsResponse();
-                data = data with
-                {
-                    Systems = sysResponse.Systems,
-                    Stages = sysResponse.Stages
-                };
+                var systems = _handlers.BuildSystemsResponse();
+                data.Systems.AddRange(systems.Systems);
+                data.Stages.AddRange(systems.Stages);
             }
+
+            if (_watches.ClaimSchemas(watch, schemaVersion))
+                data.ComponentTypes.AddRange(_handlers.DescribeTypes());
 
             if (watch.IncludeEntities)
             {
-                var entResponse = _handlers.BuildEntitiesResponse(watch.ComponentFilter, watch.AnyTypes);
-                data = data with { Entities = entResponse.Entities };
+                var entities = _handlers.BuildEntitiesResponse(watch.Filter, includeTypes: false);
+                data.Entities.AddRange(entities.Entities);
             }
 
             await _nats.PublishAsync(
-                watch.DataSubject,
-                MessagePackSerializer.Serialize(data),
-                cancellationToken: cancellationToken);
+                watch.DataSubject, data.ToByteArray(), cancellationToken: cancellationToken);
         }
     }
 }

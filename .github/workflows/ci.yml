@@ -68,27 +68,19 @@ jobs:
 
       - name: Unit tests
         run: |
-          dotnet test engine/Engine.sln --no-build --verbosity normal --filter "Category=Unit"
-          dotnet test clients/csharp/CSharp.sln --no-build --verbosity normal --filter "Category=Unit"
-
-      # The client unit tests rewrite the wire fixtures the editor's suite reads back.
-      - name: Wire fixtures are up to date
-        run: git diff --exit-code -- editor/test/fixtures
+          dotnet test engine/Engine.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
+          dotnet test clients/csharp/CSharp.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
 
       - name: Integration tests (Engine)
-        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "Category=Integration"
+        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Integration."
         env:
           NATS_URL: nats://localhost:4222
 
-      - name: Start coordinator for client integration tests
-        run: |
-          dotnet run --project engine/Engine --no-build &
-          sleep 3
-        env:
-          NATS_URL: nats://localhost:4222
-
+      # The client integration tests host a coordinator in-process, so there is no
+      # separate one to start — and a second tick loop on the same NATS would
+      # invoke every system twice.
       - name: Integration tests (Client)
-        run: dotnet test clients/csharp/Client.Tests --no-build --verbosity normal --filter "Category=Integration"
+        run: dotnet test clients/csharp/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Integration."
         env:
           NATS_URL: nats://localhost:4222
 

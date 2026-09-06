@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file ecs/v1/component.proto.
  */
 export const file_ecs_v1_component: GenFile = /*@__PURE__*/
-  fileDesc("ChZlY3MvdjEvY29tcG9uZW50LnByb3RvEgZlY3MudjEiIgoNQ29tcG9uZW50SW5mbxIRCgl0eXBlX25hbWUYASABKAkiLgoPQ29tcG9uZW50U2NoZW1hEhsKE2ZpbGVfZGVzY3JpcHRvcl9zZXQYASABKAw6WQoLZGVzY3JpcHRpb24SHy5nb29nbGUucHJvdG9idWYuTWVzc2FnZU9wdGlvbnMY0IYDIAMoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnlSC2Rlc2NyaXB0aW9uYgZwcm90bzM", [file_google_protobuf_any, file_google_protobuf_descriptor]);
+  fileDesc("ChZlY3MvdjEvY29tcG9uZW50LnByb3RvEgZlY3MudjEiIgoNQ29tcG9uZW50SW5mbxIRCgl0eXBlX25hbWUYASABKAkiVAoPQ29tcG9uZW50U2NoZW1hEhsKE2ZpbGVfZGVzY3JpcHRvcl9zZXQYASABKAwSEwoLc2NoZW1hX2hhc2gYAiABKAYSDwoHdHlwZV9pZBgDIAEoDTpZCgtkZXNjcmlwdGlvbhIfLmdvb2dsZS5wcm90b2J1Zi5NZXNzYWdlT3B0aW9ucxjQhgMgAygLMhQuZ29vZ2xlLnByb3RvYnVmLkFueVILZGVzY3JpcHRpb25iBnByb3RvMw", [file_google_protobuf_any, file_google_protobuf_descriptor]);
 
 /**
  * Carried by every component type entity; names the type the entity stands for.
@@ -45,6 +45,22 @@ export type ComponentSchema = Message<"ecs.v1.ComponentSchema"> & {
    * @generated from field: bytes file_descriptor_set = 1;
    */
   fileDescriptorSet: Uint8Array;
+
+  /**
+   * Exact identity of the type's structure. See ecs.protocol.v1.ComponentTypeRef
+   * for how it is derived.
+   *
+   * @generated from field: fixed64 schema_hash = 2;
+   */
+  schemaHash: bigint;
+
+  /**
+   * The dense id the coordinator bound this type to, stable for the world's
+   * lifetime. Zero on a type entity created before its schema was registered.
+   *
+   * @generated from field: uint32 type_id = 3;
+   */
+  typeId: number;
 };
 
 /**

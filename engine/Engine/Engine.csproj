@@ -16,12 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MessagePack" Version="3.1.7" />
     <PackageReference Include="NATS.Net" Version="2.8.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\proto\gen\csharp\Ecs.Protos.csproj" />
+    <ProjectReference Include="..\..\protocol\csharp\Ecs.Protocol\Ecs.Protocol.csproj" />
   </ItemGroup>
 
 </Project>

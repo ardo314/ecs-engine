@@ -19,7 +19,6 @@
     "@hono/node-server": "^2.1.1",
     "@mantine/core": "^7.17.8",
     "@mantine/hooks": "^7.17.8",
-    "@msgpack/msgpack": "^3.0.0",
     "@nats-io/nats-core": "^3.0.0",
     "@nats-io/transport-node": "^3.0.0",
     "hono": "^4.7.0",

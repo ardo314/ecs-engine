@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
+import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import type { NatsConnection } from "@nats-io/nats-core";
-import type { Broadcaster } from "./broadcaster.js";
 import {
-  decodeWatchData,
-  decodeWatchResponse,
-  encodeWatchCancel,
-  encodeWatchRequest,
+  WatchCancelSchema,
+  WatchDataSchema,
+  WatchRequestSchema,
+  WatchResponseSchema,
   type EntitySnapshot,
   type SystemInfo,
-} from "./msgpack.js";
+} from "@ecs/protos/ecs/protocol/v1/world_pb.js";
+import type { Broadcaster } from "./broadcaster.js";
 import { SchemaRegistry } from "./schemas.js";
 
-const COMPONENT_SCHEMA = "ecs.v1.ComponentSchema";
+const SUBJECT_SUBSCRIBE = "engine.world.watch.subscribe";
+const SUBJECT_CANCEL = "engine.world.watch.cancel";
 const RETRY_DELAY_MS = 2000;
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
@@ -27,12 +29,18 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 /**
  * Registers a watch with the coordinator and pushes decoded state snapshots to all
  * connected WebSocket clients.
+ *
+ * Everything on this path is protobuf, decoded with the generated protocol types. The
+ * component payloads inside are decoded reflectively against the descriptors the world
+ * sends, so the editor never needs to be rebuilt when a domain adds a component.
  */
 export class EngineBridge {
   private readonly watchId = randomUUID();
-  private readonly schemas = new SchemaRegistry();
   private lastSystems: SystemInfo[] = [];
   private lastStages: string[][] = [];
+
+  /** The world's schema registry, as this editor has learned it. */
+  readonly schemas = new SchemaRegistry();
 
   constructor(
     private readonly nats: NatsConnection,
@@ -50,7 +58,10 @@ export class EngineBridge {
       }
     } finally {
       try {
-        this.nats.publish("engine.watch.unsubscribe", encodeWatchCancel(this.watchId));
+        this.nats.publish(
+          SUBJECT_CANCEL,
+          toBinary(WatchCancelSchema, { $typeName: WatchCancelSchema.typeName, watchId: this.watchId }),
+        );
         console.log("[EditorBridge] Watch cancelled.");
       } catch {
         // Best-effort cleanup.
@@ -62,16 +73,18 @@ export class EngineBridge {
     while (!signal.aborted) {
       try {
         const reply = await this.nats.request(
-          "engine.watch.subscribe",
-          encodeWatchRequest({
+          SUBJECT_SUBSCRIBE,
+          toBinary(WatchRequestSchema, {
+            $typeName: WatchRequestSchema.typeName,
             watchId: this.watchId,
             includeSystems: true,
             includeEntities: true,
+            filter: undefined,
           }),
           { timeout: 10_000 },
         );
 
-        const { dataSubject } = decodeWatchResponse(reply.data);
+        const { dataSubject } = fromBinary(WatchResponseSchema, reply.data);
         console.log(`[EditorBridge] Watch registered, subscribing to ${dataSubject}`);
         return dataSubject;
       } catch {
@@ -101,40 +114,40 @@ export class EngineBridge {
   }
 
   private onWatchData(data: Uint8Array): void {
-    const watchData = decodeWatchData(data);
+    const watchData = fromBinary(WatchDataSchema, data);
 
-    if (watchData.systems !== null) this.lastSystems = watchData.systems;
-    if (watchData.stages !== null) this.lastStages = watchData.stages;
+    // Schemas arrive before anything that needs them, and only when they change.
+    for (const info of watchData.componentTypes) this.schemas.add(info);
 
-    const entities = watchData.entities ?? [];
-    this.absorbSchemas(entities);
+    if (watchData.systems.length > 0) this.lastSystems = watchData.systems;
+    if (watchData.stages.length > 0) {
+      this.lastStages = watchData.stages.map((stage) => stage.systems);
+    }
 
     this.broadcaster.broadcast(
       JSON.stringify({
         type: "snapshot",
-        tickId: Number(watchData.tickId),
-        systems: this.lastSystems,
+        tickId: Number(watchData.tick),
+        systems: this.lastSystems.map((system) => ({
+          name: system.name,
+          instanceId: system.instanceId,
+          reads: system.reads.map((id) => this.schemas.nameOf(id)),
+          writes: system.writes.map((id) => this.schemas.nameOf(id)),
+        })),
         stages: this.lastStages,
-        entities: entities.map((entity) => this.toEditorEntity(entity)),
+        entities: watchData.entities.map((entity) => this.toEditorEntity(entity)),
       }),
     );
-  }
-
-  /** Component type entities carry their own descriptors; learn them before decoding. */
-  private absorbSchemas(entities: EntitySnapshot[]): void {
-    for (const entity of entities) {
-      const schema = entity.components.get(COMPONENT_SCHEMA);
-      if (schema !== undefined) this.schemas.add(schema);
-    }
   }
 
   private toEditorEntity(entity: EntitySnapshot) {
     const components: Record<string, unknown> = {};
 
-    for (const [typeName, payload] of entity.components) {
-      components[typeName] = this.schemas.decode(typeName, payload);
+    for (const binding of entity.components) {
+      const name = this.schemas.nameOf(binding.typeId);
+      components[name] = this.schemas.decodeById(binding.typeId, binding.payload);
     }
 
-    return { entityId: Number(entity.entityId), components };
+    return { entityId: Number(entity.entity), components };
   }
 }

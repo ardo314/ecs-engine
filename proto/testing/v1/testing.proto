@@ -38,4 +38,16 @@ message TestVelocity {
   float vy = 2;
 }
 
+// Same shape as TestPosition, different name — so schema identity has to be
+// anchored to the type, not only to its fields.
+message TestPositionTwin {
+  float x = 1;
+  float y = 2;
+}
+
+// A component with a nested message, for payload validation.
+message TestParent {
+  TestPosition position = 1;
+}
+
 message TestDisabled {}
