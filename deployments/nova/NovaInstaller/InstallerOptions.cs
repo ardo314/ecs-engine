@@ -33,8 +33,9 @@ public sealed class InstallerOptions
     public required bool InstallEditor { get; init; }
 
     /// <summary>
-    /// Overrides the broker address. Left null the containers fall back to
-    /// NATS_BROKER, which NOVA injects.
+    /// The broker address passed to every app as NATS_URL. Defaults to the NATS_BROKER
+    /// value NOVA injects into the installer's own container — nothing else in the stack
+    /// knows that variable exists.
     /// </summary>
     public string? NatsUrl { get; init; }
 
@@ -61,7 +62,7 @@ public sealed class InstallerOptions
             EditorImage = Value(read, "ECS_EDITOR_IMAGE") ?? $"{registry}/editor:{tag}",
             SystemImages = ParseSystemImages(Value(read, "ECS_SYSTEM_IMAGES")),
             InstallEditor = ParseBool(Value(read, "ECS_INSTALL_EDITOR"), true),
-            NatsUrl = Value(read, "ECS_NATS_URL"),
+            NatsUrl = Value(read, "ECS_NATS_URL") ?? Value(read, "NATS_BROKER"),
             TickRate = ParseInt(read, "ECS_TICK_RATE", 20),
             RegistryUser = Value(read, "ECS_REGISTRY_USER"),
             RegistryPassword = Value(read, "ECS_REGISTRY_PASSWORD"),

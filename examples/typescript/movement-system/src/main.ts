@@ -3,7 +3,7 @@ import { Ecs, component } from "@ecs/client";
 import { PositionSchema, VelocitySchema } from "@ecs/protos/movement/v1/movement_pb.js";
 import { MovementSystem } from "./movement-system.js";
 
-const servers = process.env.NATS_URL ?? process.env.NATS_BROKER ?? "nats://localhost:4222";
+const servers = process.env.NATS_URL ?? "nats://localhost:4222";
 const nats = await connect({ servers });
 
 const ecs = new Ecs(nats);

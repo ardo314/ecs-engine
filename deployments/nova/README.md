@@ -7,8 +7,10 @@ NOVA gives no direct Kubernetes access, so the installer drives the NOVA app API
 served at `http://<instance>/<cell>/<app-name>`.
 
 NATS is not installed — NOVA runs its own broker and injects its address into
-every app container as `NATS_BROKER` (a `nats://user:token@host` URL), which the
-coordinator and the client SDK fall back to when `NATS_URL` is unset.
+every app container as `NATS_BROKER` (a `nats://user:token@host` URL). That
+variable stops here: the installer reads its own copy of it and writes the
+address into each app manifest as `NATS_URL`, which is the only broker variable
+the coordinator, the SDKs and the editor read.
 
 ## What gets installed
 
@@ -49,7 +51,7 @@ All configuration is via environment variables.
 | `ECS_EDITOR_IMAGE` | derived | Overrides the editor image |
 | `ECS_SYSTEM_IMAGES` | *(empty)* | Comma-separated `name=image` or bare image references |
 | `ECS_INSTALL_EDITOR` | `true` | Set `false` to skip the editor app |
-| `ECS_NATS_URL` | *(unset)* | Overrides the broker; unset means NOVA's `NATS_BROKER` is used |
+| `ECS_NATS_URL` | NOVA's injected `NATS_BROKER` | Broker address written into every app as `NATS_URL` |
 | `ECS_TICK_RATE` | `20` | Coordinator tick rate |
 | `ECS_REGISTRY_USER` | *(unset)* | Pull credentials; both parts required |
 | `ECS_REGISTRY_PASSWORD` | *(unset)* | Pull credentials; both parts required |

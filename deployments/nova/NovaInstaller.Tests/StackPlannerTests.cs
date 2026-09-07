@@ -99,7 +99,7 @@ public class StackPlannerTests
     }
 
     [Fact]
-    public void Plan_OmitsNatsUrlSoContainersFallBackToNovasBroker()
+    public void Plan_OmitsNatsUrlWhenNoBrokerAddressIsKnown()
     {
         var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
         {
@@ -107,6 +107,19 @@ public class StackPlannerTests
         }));
 
         Assert.DoesNotContain(apps.SelectMany(a => a.Environment!), e => e.Name == "NATS_URL");
+    }
+
+    [Fact]
+    public void Plan_PassesNovasInjectedBrokerOnAsNatsUrl()
+    {
+        var apps = StackPlanner.Plan(Options(new Dictionary<string, string>
+        {
+            ["ECS_SYSTEM_IMAGES"] = "ghcr.io/acme/movement-system:1.0",
+            ["NATS_BROKER"] = "nats://user:token@nova-nats:4222"
+        }));
+
+        Assert.All(apps, app =>
+            Assert.Equal("nats://user:token@nova-nats:4222", app.Environment!.Single(e => e.Name == "NATS_URL").Value));
     }
 
     [Fact]

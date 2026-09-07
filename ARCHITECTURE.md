@@ -728,14 +728,14 @@ becomes one NOVA app, published at `http://<instance>/<cell>/<app-name>`:
 | `ecs-editor` | Editor UI and API, mounted at the public path NOVA injects as `BASE_PATH` |
 | `ecs-<system>` | One app per system image |
 
-No broker is installed: NOVA runs its own NATS and injects the address as
-`NATS_BROKER` — a `nats://user:token@host` URL, credentials included — which both
-the coordinator and `NatsConfig` read when `NATS_URL` is unset and mask before
-logging. NOVA also injects `NOVA_API` (the REST endpoint) and `CELL_NAME`, which
-the installer and the NOVA example systems fall back to so they work unconfigured
-inside an instance. The coordinator is installed before anything that talks to it.
-Re-running the installer deletes and recreates existing apps, so it doubles as an
-upgrade.
+No broker is installed: NOVA runs its own NATS and injects the address into every
+app container under a host-specific name. That name is the installer's business
+alone — it resolves the address and passes it on as `NATS_URL`, the only broker
+variable the coordinator, the SDKs and the editor know about. NOVA also injects
+`NOVA_API` (the REST endpoint) and `CELL_NAME`, which the installer and the NOVA
+example systems fall back to so they work unconfigured inside an instance. The
+coordinator is installed before anything that talks to it. Re-running the
+installer deletes and recreates existing apps, so it doubles as an upgrade.
 
 The installer can itself be deployed as a NOVA app. It serves `/health` from its
 own `HealthEndpoint` for the duration of the install and then idles when NOVA's

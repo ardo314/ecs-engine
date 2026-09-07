@@ -34,6 +34,26 @@ public class InstallerOptionsTests
     }
 
     [Fact]
+    public void FromEnvironment_TakesNatsUrlFromNovasInjectedBroker()
+    {
+        var options = Options(new Dictionary<string, string> { ["NATS_BROKER"] = "nats://user:token@nova-nats:4222" });
+
+        Assert.Equal("nats://user:token@nova-nats:4222", options.NatsUrl);
+    }
+
+    [Fact]
+    public void FromEnvironment_PrefersExplicitNatsUrlOverTheInjectedBroker()
+    {
+        var options = Options(new Dictionary<string, string>
+        {
+            ["ECS_NATS_URL"] = "nats://platform-nats:4222",
+            ["NATS_BROKER"] = "nats://user:token@nova-nats:4222"
+        });
+
+        Assert.Equal("nats://platform-nats:4222", options.NatsUrl);
+    }
+
+    [Fact]
     public void FromEnvironment_PrefersExplicitImageOverrides()
     {
         var options = Options(new Dictionary<string, string> { ["ECS_ENGINE_IMAGE"] = "docker.io/acme/engine:dev" });

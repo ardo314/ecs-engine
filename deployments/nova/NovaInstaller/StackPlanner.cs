@@ -59,7 +59,11 @@ public static class StackPlanner
         Environment = [.. NatsUrl(options)]
     };
 
-    /// <summary>Omitted unless overridden, so containers fall back to NOVA's NATS_BROKER.</summary>
+    /// <summary>
+    /// NOVA's NATS_BROKER stops here: the installer resolves it and passes the address on
+    /// as NATS_URL, the only broker variable the rest of the stack reads. Omitted when
+    /// unknown, leaving containers on their local default.
+    /// </summary>
     private static EnvVar[] NatsUrl(InstallerOptions options) =>
         options.NatsUrl is null ? [] : [new EnvVar { Name = "NATS_URL", Value = options.NatsUrl }];
 

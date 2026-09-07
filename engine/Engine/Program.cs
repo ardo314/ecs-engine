@@ -1,11 +1,8 @@
 ﻿using Engine.Coordinator;
 using NATS.Client.Core;
 
-// NATS_BROKER is injected by hosts that supply their own broker, such as Wandelbots NOVA,
-// and may carry credentials as nats://user:token@host.
+// The URL may carry credentials as nats://user:token@host, so it is redacted before logging.
 var natsUrl = Environment.GetEnvironmentVariable("NATS_URL");
-if (string.IsNullOrWhiteSpace(natsUrl))
-    natsUrl = Environment.GetEnvironmentVariable("NATS_BROKER");
 if (string.IsNullOrWhiteSpace(natsUrl))
     natsUrl = "nats://localhost:4222";
 

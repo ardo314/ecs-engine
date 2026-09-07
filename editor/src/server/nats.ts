@@ -2,8 +2,7 @@ import type { NatsConnection } from "@nats-io/nats-core";
 import { connect } from "@nats-io/transport-node";
 
 export function natsOptions() {
-  const servers =
-    process.env.NATS_URL ?? process.env.NATS_BROKER ?? "nats://localhost:4222";
+  const servers = process.env.NATS_URL ?? "nats://localhost:4222";
   const user = process.env.NATS_USER;
   const token = process.env.NATS_TOKEN;
 
