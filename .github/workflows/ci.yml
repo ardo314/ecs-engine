@@ -30,9 +30,16 @@ jobs:
       - name: Format
         run: npx buf format --diff --exit-code
 
+      # Nothing to compare against until main itself carries a buf module; the check
+      # starts enforcing itself as soon as this lands.
       - name: Breaking changes
         if: github.event_name == 'pull_request'
-        run: npx buf breaking --against '.git#branch=origin/main'
+        run: |
+          if git cat-file -e origin/main:buf.yaml 2>/dev/null; then
+            npx buf breaking --against '.git#branch=origin/main'
+          else
+            echo "main has no buf module yet; skipping the breaking-change check."
+          fi
 
       - name: Generated code is up to date
         run: |
