@@ -79,7 +79,7 @@ engine/              — Coordinator console app and its tests
 clients/csharp/      — C# system-authoring SDK (Client) and its tests
 editor/              — React UI + Hono API + NATS bridge, one Node process
 examples/            — Example systems
-deployments/nova/    — Installer for Wandelbots NOVA instances
+deployments/nova/    — Installer for Wandelbots NOVA instances (Node + TypeScript)
 .devcontainer/       — Dev container configuration
 ```
 

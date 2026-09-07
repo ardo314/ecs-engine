@@ -120,21 +120,8 @@ jobs:
       - name: Conformance vectors are unchanged
         run: git diff --exit-code -- protocol/conformance
 
-  test-nova-installer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
-      - name: Test
-        run: dotnet test deployments/nova/NovaInstaller.sln --verbosity normal
-
   publish-images:
-    needs: [proto, test-engine, build-editor, test-nova-installer]
+    needs: [proto, test-engine, build-editor]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
@@ -159,7 +146,7 @@ jobs:
             context: .
             dockerfile: ./editor/Dockerfile
           - name: nova-installer
-            context: ./deployments/nova
+            context: .
             dockerfile: ./deployments/nova/Dockerfile
             # Bakes the revision tag in so the installer deploys images from this same commit.
             build-args: ECS_IMAGE_TAG=sha-${{ github.sha }}

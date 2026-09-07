@@ -737,9 +737,10 @@ example systems fall back to so they work unconfigured inside an instance. The
 coordinator is installed before anything that talks to it. Re-running the
 installer deletes and recreates existing apps, so it doubles as an upgrade.
 
-The installer can itself be deployed as a NOVA app. It serves `/health` from its
-own `HealthEndpoint` for the duration of the install and then idles when NOVA's
-injected `BASE_PATH` is present, because NOVA restarts an app whose probe stops
+The installer is a Node process (`@ecs/nova-installer`) and can itself be deployed
+as a NOVA app. It serves `/health` from its own listener for the duration of the
+install and then idles when NOVA's injected `BASE_PATH` is present, because NOVA
+restarts an app whose probe stops
 answering — a one-shot process would reinstall the stack on every restart.
 
 ---

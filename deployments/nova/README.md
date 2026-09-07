@@ -68,7 +68,7 @@ Exit codes: `0` success, `1` API or network failure, `2` bad configuration.
 Preview the manifests without touching the instance:
 
 ```bash
-ECS_DRY_RUN=true dotnet run --project NovaInstaller
+ECS_DRY_RUN=true npm start --workspace @ecs/nova-installer
 ```
 
 Install:
@@ -104,7 +104,16 @@ app is deleted and recreated.
 
 ## Building
 
+The installer is an npm workspace package (`@ecs/nova-installer`), so it builds from the
+repository root along with the rest of the TypeScript.
+
 ```bash
-dotnet test deployments/nova/NovaInstaller.sln
-docker build -t nova-installer deployments/nova
+npm run build --workspace @ecs/nova-installer
+npm test --workspace @ecs/nova-installer
+docker build -f deployments/nova/Dockerfile -t nova-installer .
 ```
+
+The Docker build context is the repository root, not this directory — npm workspaces resolve
+through the root `package.json` and `package-lock.json`. `--build-arg ECS_IMAGE_TAG=…` bakes
+the tag in as `ECS_DEFAULT_IMAGE_TAG`, which is how a published installer defaults to the
+images built from its own revision.

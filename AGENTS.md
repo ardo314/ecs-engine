@@ -57,10 +57,10 @@ ecs-engine/
 │   ├── src/server/              # Hono, builds on @ecs/client
 │   └── test/                    # Vitest
 ├── examples/                    # Example systems
-├── deployments/nova/            # Wandelbots NOVA installer
+├── deployments/nova/            # Wandelbots NOVA installer (@ecs/nova-installer)
 ├── .devcontainer/               # Dev container (build environment)
 ├── buf.yaml / buf.gen.yaml
-├── package.json                 # npm workspace root (buf CLI, protos, editor)
+├── package.json                 # npm workspace root (buf CLI, protos, editor, installer)
 ├── ARCHITECTURE.md
 ├── AGENTS.md                    # This file
 └── README.md
