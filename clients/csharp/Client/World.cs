@@ -25,11 +25,13 @@ public sealed class World : IAsyncDisposable
     private readonly ECS _ecs;
     private readonly Lock _gate = new();
     private readonly Dictionary<SystemBase, Entry> _systems = new();
+    private readonly CoordinatorClient _coordinator;
 
     internal World(ECS ecs, string name)
     {
         _ecs = ecs;
         Name = name;
+        _coordinator = new CoordinatorClient(ecs.Nats, $"world:{name}");
     }
 
     public string Name { get; }
@@ -50,8 +52,8 @@ public sealed class World : IAsyncDisposable
     {
         if (!Commands.HasPendingCommands) return;
 
-        await CommandPublisher.WaitForCoordinatorAsync(Nats, cancellationToken);
-        await CommandPublisher.PublishAsync(Nats, Commands, cancellationToken);
+        await _coordinator.WaitForCoordinatorAsync(cancellationToken);
+        await _coordinator.SubmitAsync(Commands, cancellationToken);
     }
 
     /// <summary>

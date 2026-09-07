@@ -14,3 +14,7 @@ RUN curl -fsSL https://github.com/nats-io/natscli/releases/download/v0.1.6/nats-
     && unzip /tmp/nats-cli.zip -d /tmp/nats-cli \
     && mv /tmp/nats-cli/nats-0.1.6-linux-amd64/nats /usr/local/bin/nats \
     && rm -rf /tmp/nats-cli /tmp/nats-cli.zip
+
+# Install buf (Protobuf schema tooling)
+RUN curl -fsSL "https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf \
+    && chmod +x /usr/local/bin/buf

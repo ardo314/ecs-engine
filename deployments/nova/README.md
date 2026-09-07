@@ -7,16 +7,17 @@ NOVA gives no direct Kubernetes access, so the installer drives the NOVA app API
 served at `http://<instance>/<cell>/<app-name>`.
 
 NATS is not installed — NOVA runs its own broker and injects its address into
-every app container as `NATS_BROKER` (a `nats://user:token@host` URL), which the
-coordinator and the client SDK fall back to when `NATS_URL` is unset.
+every app container as `NATS_BROKER` (a `nats://user:token@host` URL). That
+variable stops here: the installer reads its own copy of it and writes the
+address into each app manifest as `NATS_URL`, which is the only broker variable
+the coordinator, the SDKs and the editor read.
 
 ## What gets installed
 
 | App | Image | Port | Health |
 |---|---|---|---|
 | `ecs-engine` | `engine` | 8080 | `health` |
-| `ecs-editor-api` | `editor-backend` | 8080 | `health` |
-| `ecs-editor` | `editor-frontend` | 80 | `config.js` |
+| `ecs-editor` | `editor` | 8080 | `health` |
 | `ecs-<system>` | one per `ECS_SYSTEM_IMAGES` entry | 8080 | `health` |
 
 The coordinator is installed first, before anything that talks to it.
@@ -27,8 +28,8 @@ NOVA restarts any app whose health probe fails. Every process therefore hosts a
 
 NOVA injects `BASE_PATH` (`/<cell>/<app-name>`) into every app, so the installer
 does not set it. `UseBasePath` mounts the whole app below it with `UsePathBase`,
-so every endpoint — probes included — answers under `/<cell>/<app>/`. The
-frontend copies its assets beneath it.
+so every endpoint — probes included — answers under `/<cell>/<app>/`. The editor
+reads the same variable and mounts its UI, API and WebSocket below it.
 
 NOVA joins `health_path` and `app_icon` onto `BASE_PATH`, which already ends in a
 slash, so both are relative in the manifest — `health`, not `/health`, which
@@ -47,11 +48,10 @@ All configuration is via environment variables.
 | `ECS_IMAGE_REGISTRY` | `ghcr.io/ardo314/ecs-engine` | Registry the default images come from |
 | `ECS_IMAGE_TAG` | the installer's own build revision (`latest` for local builds) | Tag for the default images |
 | `ECS_ENGINE_IMAGE` | derived | Overrides the engine image |
-| `ECS_EDITOR_BACKEND_IMAGE` | derived | Overrides the editor backend image |
-| `ECS_EDITOR_FRONTEND_IMAGE` | derived | Overrides the editor frontend image |
+| `ECS_EDITOR_IMAGE` | derived | Overrides the editor image |
 | `ECS_SYSTEM_IMAGES` | *(empty)* | Comma-separated `name=image` or bare image references |
-| `ECS_INSTALL_EDITOR` | `true` | Set `false` to skip both editor apps |
-| `ECS_NATS_URL` | *(unset)* | Overrides the broker; unset means NOVA's `NATS_BROKER` is used |
+| `ECS_INSTALL_EDITOR` | `true` | Set `false` to skip the editor app |
+| `ECS_NATS_URL` | NOVA's injected `NATS_BROKER` | Broker address written into every app as `NATS_URL` |
 | `ECS_TICK_RATE` | `20` | Coordinator tick rate |
 | `ECS_REGISTRY_USER` | *(unset)* | Pull credentials; both parts required |
 | `ECS_REGISTRY_PASSWORD` | *(unset)* | Pull credentials; both parts required |
@@ -68,7 +68,7 @@ Exit codes: `0` success, `1` API or network failure, `2` bad configuration.
 Preview the manifests without touching the instance:
 
 ```bash
-ECS_DRY_RUN=true dotnet run --project NovaInstaller
+ECS_DRY_RUN=true npm start --workspace @ecs/nova-installer
 ```
 
 Install:
@@ -104,7 +104,16 @@ app is deleted and recreated.
 
 ## Building
 
+The installer is an npm workspace package (`@ecs/nova-installer`), so it builds from the
+repository root along with the rest of the TypeScript.
+
 ```bash
-dotnet test deployments/nova/NovaInstaller.sln
-docker build -t nova-installer deployments/nova
+npm run build --workspace @ecs/nova-installer
+npm test --workspace @ecs/nova-installer
+docker build -f deployments/nova/Dockerfile -t nova-installer .
 ```
+
+The Docker build context is the repository root, not this directory — npm workspaces resolve
+through the root `package.json` and `package-lock.json`. `--build-arg ECS_IMAGE_TAG=…` bakes
+the tag in as `ECS_DEFAULT_IMAGE_TAG`, which is how a published installer defaults to the
+images built from its own revision.

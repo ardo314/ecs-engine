@@ -1,338 +1,271 @@
-using Client;
+using Ecs.Protocol;
+using Ecs.Protocol.V1;
+using Engine.Coordinator;
 using Engine.Core;
-using Engine.Core.Messages;
-using MessagePack;
+using Google.Protobuf;
 using NATS.Client.Core;
-
-using Client.Tests.Unit;
+using Testing.V1;
 
 namespace Client.Tests.Integration;
 
-// ── Test system definitions ───────────────────────────────────
-
-public class EmptySystem : SystemBase
+internal sealed class ReadOnlySystem : SystemBase
 {
-    protected override Task OnUpdateAsync() => Task.CompletedTask;
-}
+    private readonly EntityQuery _query = null!;
 
-public class SpawnSystem : SystemBase
-{
-    private readonly IComponent[] _components;
-    public SpawnSystem(params IComponent[] components) { _components = components; }
-    protected override void OnAdd()
-    {
-        Commands.CreateEntity(_components);
-    }
-    protected override Task OnUpdateAsync() => Task.CompletedTask;
-}
+    public ReadOnlySystem() => _query = NewQuery().With(Query.Read<TestPosition>());
 
-public class ReadPositionSystem : SystemBase
-{
-    private readonly EntityQuery _q;
-
-    public ReadPositionSystem()
-    {
-        _q = NewQuery()
-            .With(Query.ReadOnly<TestPosition>());
-    }
-
-    protected override Task OnUpdateAsync() => Task.CompletedTask;
-}
-
-public class TickProcessorSystem : SystemBase
-{
-    private readonly EntityQuery _q;
-    public int TicksProcessed;
-
-    public TickProcessorSystem()
-    {
-        _q = NewQuery()
-            .With(Query.ReadWrite<TestPosition>())
-            .With(Query.ReadOnly<TestVelocity>());
-    }
+    public int Ticks { get; private set; }
+    public int LastSeen { get; private set; }
 
     protected override Task OnUpdateAsync()
     {
-        foreach (var entity in _q.Entities)
-        {
-            var pos = _q.Get<TestPosition>(entity);
-            var vel = _q.Get<TestVelocity>(entity);
-            _q.Set(entity, new TestPosition(
-                pos.X + vel.Vx * DeltaTime,
-                pos.Y + vel.Vy * DeltaTime));
-        }
-        Interlocked.Increment(ref TicksProcessed);
+        Ticks++;
+        LastSeen = _query.Entities.Count;
         return Task.CompletedTask;
     }
 }
 
+internal sealed class IntegratingSystem : SystemBase
+{
+    private readonly EntityQuery _query;
+
+    public IntegratingSystem() =>
+        _query = NewQuery().With(Query.Write<TestPosition>()).With(Query.Read<TestVelocity>());
+
+    public int Ticks { get; private set; }
+
+    protected override Task OnUpdateAsync()
+    {
+        Ticks++;
+
+        foreach (var (entity, position, velocity) in _query.Each<TestPosition, TestVelocity>())
+        {
+            _query.Set(entity, new TestPosition
+            {
+                X = position.X + (velocity.Vx * DeltaTime),
+                Y = position.Y + (velocity.Vy * DeltaTime),
+            });
+        }
+
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class SmugglerSystem : SystemBase
+{
+    private readonly EntityQuery _query;
+
+    public SmugglerSystem() => _query = NewQuery().With(Query.Read<TestPosition>());
+
+    protected override Task OnUpdateAsync()
+    {
+        // Declared read-only, so the SDK refuses before anything reaches the wire.
+        Failed = Record.Exception(
+            () => _query.Set(_query.Entities.FirstOrDefault(), new TestPosition { X = 1f }));
+        return Task.CompletedTask;
+    }
+
+    public Exception? Failed { get; private set; }
+}
+
 /// <summary>
-/// Integration tests for SystemRunner against a running engine coordinator.
-/// Start the engine first: docker compose up nats engine -d
-/// All verification is done via NATS query APIs — no direct engine references.
+/// The redesigned loop end to end: schema handshake, registration, lease-scoped
+/// invocation, validated result.
 /// </summary>
 [Collection("NATS")]
-[Trait("Category", "Integration")]
-public class SystemRunnerIntegrationTests : IAsyncLifetime
+public class SystemRunnerIntegrationTests(NatsClientFixture fixture) : IAsyncLifetime
 {
-    private readonly NatsClientFixture _fixture;
-    private NatsConnection _nats = null!;
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
 
-    public SystemRunnerIntegrationTests(NatsClientFixture fixture)
-    {
-        _fixture = fixture;
-    }
+    private NatsConnection _coordinatorNats = null!;
+    private CancellationTokenSource _cts = null!;
+    private Task _coordinator = Task.CompletedTask;
+
+    private SchemaRegistry Schemas { get; } = new();
+    private WorldState World { get; set; } = null!;
 
     public async Task InitializeAsync()
     {
-        _fixture.EnsureAvailable();
-        _nats = new NatsConnection(new NatsOpts { Url = _fixture.Url });
-        await _nats.ConnectAsync();
+        if (!fixture.Available) return;
+
+        _coordinatorNats = new NatsConnection(new NatsOpts { Url = fixture.Url });
+        await _coordinatorNats.ConnectAsync();
+
+        World = new WorldState(Schemas);
+        var systems = new SystemRegistry();
+        var watches = new WatchManager();
+        var handlers = new NatsHandlers(_coordinatorNats, Schemas, systems, World, watches);
+
+        _cts = new CancellationTokenSource();
+        _ = Task.Run(() => handlers.StartAsync(_cts.Token));
+        await handlers.Ready;
+
+        var tickLoop = new TickLoop(_coordinatorNats, Schemas, systems, World, watches, handlers, 50);
+        _coordinator = Task.Run(() => tickLoop.RunAsync(_cts.Token));
+
+        await Task.Delay(200);
     }
 
     public async Task DisposeAsync()
     {
-        await _nats.DisposeAsync();
+        if (!fixture.Available) return;
+
+        await _cts.CancelAsync();
+        try { await _coordinator; } catch (OperationCanceledException) { }
+        await _coordinatorNats.DisposeAsync();
+        _cts.Dispose();
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────
-
-    private async Task<QuerySystemsResponse> QuerySystemsAsync()
+    private async Task<ECS> ConnectAsync()
     {
-        var reply = await _nats.RequestAsync<byte[], byte[]>(
-            "engine.query.systems", Array.Empty<byte>());
-        return MessagePackSerializer.Deserialize<QuerySystemsResponse>(reply.Data!);
+        var nats = new NatsConnection(new NatsOpts { Url = fixture.Url });
+        await nats.ConnectAsync();
+        return new ECS(nats);
     }
 
-    private async Task<QueryEntitiesResponse> QueryEntitiesAsync(string[]? filter = null)
+    private async Task WaitUntil(Func<bool> condition, string because)
     {
-        var request = new QueryEntitiesRequest { ComponentFilter = filter };
-        var reply = await _nats.RequestAsync<byte[], byte[]>(
-            "engine.query.entities",
-            MessagePackSerializer.Serialize(request));
-        return MessagePackSerializer.Deserialize<QueryEntitiesResponse>(reply.Data!);
-    }
-
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = DateTime.UtcNow + Timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (await condition())
-                return;
-            await Task.Delay(150);
+            if (condition()) return;
+            await Task.Delay(25);
         }
+
+        Assert.Fail(because);
     }
 
-    // ── Tests ─────────────────────────────────────────────────────────
-
-    [Fact]
-    public void Constructor_RejectsMissingConnection()
+    private uint TypeId<T>() where T : IMessage<T>, new()
     {
-        var system = new EmptySystem();
-        system.InvokeOnAdd();
-        Assert.Throws<ArgumentNullException>(() => new SystemRunner(system, null!));
-    }
-
-    [Fact]
-    public void InstanceId_IsUnique()
-    {
-        var s1 = new EmptySystem();
-        var s2 = new EmptySystem();
-        s1.InvokeOnAdd();
-        s2.InvokeOnAdd();
-        var r1 = new SystemRunner(s1, _nats);
-        var r2 = new SystemRunner(s2, _nats);
-        Assert.NotEqual(r1.InstanceId, r2.InstanceId);
-        Assert.NotEmpty(r1.InstanceId);
+        Assert.True(Schemas.TryGet(ComponentType<T>.Name, out var type), $"{ComponentType<T>.Name} unbound");
+        return type.TypeId;
     }
 
     [Fact]
-    public async Task SpawnEntityViaEcb_EntityAppearsViaQuery()
+    public void Constructor_RejectsAMissingConnection()
     {
-        var system = new SpawnSystem(new TestPosition { X = 77.0f, Y = 88.0f });
-        system.InvokeOnAdd();
-        var runner = new SystemRunner(system, _nats);
-
-        // ECB is flushed on connect in RunAsync, but we need to manually flush here since we don't call RunAsync
-        // Instead, the ECB gets flushed when RunAsync starts. Let's use a short-lived RunAsync.
-        var typeName = ComponentTypeId.Of<TestPosition>().TypeName;
-
-        // Run for a brief time to let the ECB flush
-        using var cts = new CancellationTokenSource();
-        var runTask = runner.RunAsync(cts.Token);
-        await Task.Delay(500);
-        await cts.CancelAsync();
-        try { await runTask; } catch (OperationCanceledException) { }
-
-        await WaitUntilAsync(async () =>
-        {
-            var resp = await QueryEntitiesAsync(new[] { typeName });
-            return resp.Entities.Any(e => e.Components.ContainsKey(typeName));
-        }, TimeSpan.FromSeconds(5));
-
-        var entities = await QueryEntitiesAsync(new[] { typeName });
-        Assert.NotEmpty(entities.Entities);
+        Assert.Throws<ArgumentNullException>(() => new SystemRunner(new ReadOnlySystem(), null!));
     }
 
     [Fact]
-    public async Task RunAsync_RegistersSystemVisibleViaQuery()
+    public async Task SeedingAWorld_RegistersSchemasAndCreatesEntities()
     {
-        var system = new ReadPositionSystem();
-        var name = system.SystemName;
-        system.InvokeOnAdd();
-        var runner = new SystemRunner(system, _nats);
+        fixture.EnsureAvailable();
+        await using var ecs = await ConnectAsync();
+        var world = ecs.GetWorld(Guid.NewGuid().ToString("N"));
 
-        using var cts = new CancellationTokenSource();
-        var runTask = runner.RunAsync(cts.Token);
+        world.Commands.CreateEntity(new TestPosition { X = 1f }, new TestVelocity { Vx = 2f });
+        await world.FlushAsync();
 
-        await WaitUntilAsync(async () =>
-        {
-            var resp = await QuerySystemsAsync();
-            return resp.Systems.Any(s => s.Name == name);
-        }, TimeSpan.FromSeconds(5));
+        await WaitUntil(
+            () => Schemas.TryGet(ComponentType<TestPosition>.Name, out _),
+            "the coordinator never bound testing.v1.TestPosition");
 
-        var systems = await QuerySystemsAsync();
-        var info = systems.Systems.FirstOrDefault(s => s.Name == name);
-        Assert.NotNull(info);
-        Assert.Contains(ComponentTypeId.Of<TestPosition>().TypeName, info.Reads);
-
-        await cts.CancelAsync();
-        try { await runTask; } catch (OperationCanceledException) { }
+        var position = TypeId<TestPosition>();
+        await WaitUntil(
+            () => World.AllEntities.Any(e => World.GetComponent(e, position) is { } p &&
+                                             Math.Abs(TestPosition.Parser.ParseFrom(p).X - 1f) < 0.001f),
+            "the seeded entity never reached the world");
     }
 
     [Fact]
-    public async Task RunAsync_UnregistersOnCancellation()
+    public async Task ASystemIsInvokedAndItsWritesLandInTheWorld()
     {
-        var system = new ReadPositionSystem();
-        var name = system.SystemName;
-        system.InvokeOnAdd();
-        var runner = new SystemRunner(system, _nats);
+        fixture.EnsureAvailable();
+        await using var ecs = await ConnectAsync();
+        var world = ecs.GetWorld(Guid.NewGuid().ToString("N"));
 
-        using var cts = new CancellationTokenSource();
-        var runTask = runner.RunAsync(cts.Token);
+        world.Commands.CreateEntity(new TestPosition(), new TestVelocity { Vx = 10f });
+        await world.FlushAsync();
 
-        await WaitUntilAsync(async () =>
-        {
-            var resp = await QuerySystemsAsync();
-            return resp.Systems.Any(s => s.Name == name);
-        }, TimeSpan.FromSeconds(5));
+        var system = new IntegratingSystem();
+        world.AddSystem(system);
 
-        await cts.CancelAsync();
-        try { await runTask; } catch (OperationCanceledException) { }
-        await Task.Delay(500);
+        await WaitUntil(() => system.Ticks > 3, "the system was never invoked");
 
-        var after = await QuerySystemsAsync();
-        Assert.DoesNotContain(after.Systems, s => s.Name == name);
+        var position = TypeId<TestPosition>();
+        await WaitUntil(
+            () => World.AllEntities.Any(e => World.GetComponent(e, position) is { } p &&
+                                             TestPosition.Parser.ParseFrom(p).X > 0f),
+            "the system's writes never reached the world");
+
+        await world.ShutdownAsync();
     }
 
     [Fact]
-    public async Task RunAsync_ReceivesTicksAndProcessesComponents()
+    public async Task ARunningSystemIsVisibleToTheScheduler_AndDisappearsWhenItStops()
     {
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+        fixture.EnsureAvailable();
+        await using var ecs = await ConnectAsync();
+        var world = ecs.GetWorld(Guid.NewGuid().ToString("N"));
 
-        // Spawn entity with both components via a separate system
-        var spawner = new SpawnSystem(
-            new TestPosition { X = 0.0f, Y = 0.0f },
-            new TestVelocity { Vx = 10.0f, Vy = 5.0f });
-        spawner.InvokeOnAdd();
-        var spawnRunner = new SystemRunner(spawner, _nats);
-        // Run briefly to flush ECB
-        using var spawnCts = new CancellationTokenSource();
-        var spawnTask = spawnRunner.RunAsync(spawnCts.Token);
-        await Task.Delay(500);
-        await spawnCts.CancelAsync();
-        try { await spawnTask; } catch (OperationCanceledException) { }
+        // A system is only invoked when something matches its query.
+        world.Commands.CreateEntity(new TestPosition());
+        await world.FlushAsync();
 
-        await WaitUntilAsync(async () =>
+        var system = new ReadOnlySystem();
+        world.AddSystem(system);
+
+        await WaitUntil(() => system.Ticks > 0, "the system never received an invocation");
+
+        await using var probe = new NatsConnection(new NatsOpts { Url = fixture.Url });
+        await probe.ConnectAsync();
+
+        var response = await QuerySystems(probe);
+        var info = Assert.Single(response.Systems, s => s.Name == "ReadOnly");
+        Assert.Contains(TypeId<TestPosition>(), info.Reads);
+
+        await world.RemoveSystemAsync(system);
+
+        var deadline = DateTime.UtcNow + Timeout;
+        while (DateTime.UtcNow < deadline)
         {
-            var resp = await QueryEntitiesAsync(new[] { posType, velType });
-            return resp.Entities.Length > 0;
-        }, TimeSpan.FromSeconds(5));
-
-        // Run a system that reads velocity and writes position
-        var system = new TickProcessorSystem();
-        system.InvokeOnAdd();
-        var runner = new SystemRunner(system, _nats);
-        using var cts = new CancellationTokenSource();
-        var runTask = runner.RunAsync(cts.Token);
-
-        await WaitUntilAsync(async () =>
-        {
-            await Task.CompletedTask;
-            return Volatile.Read(ref system.TicksProcessed) > 0;
-        }, TimeSpan.FromSeconds(10));
-
-        await cts.CancelAsync();
-        try { await runTask; } catch (OperationCanceledException) { }
-
-        Assert.True(system.TicksProcessed > 0, $"Expected ticks, got {system.TicksProcessed}");
-    }
-
-    [Fact]
-    public async Task RunAsync_MutationsAppliedToWorldState()
-    {
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
-
-        // Spawn entity with known initial position and velocity
-        var spawner = new SpawnSystem(
-            new TestPosition { X = 0.0f, Y = 0.0f },
-            new TestVelocity { Vx = 10.0f, Vy = 5.0f });
-        spawner.InvokeOnAdd();
-        var spawnRunner = new SystemRunner(spawner, _nats);
-        using var spawnCts = new CancellationTokenSource();
-        var spawnTask = spawnRunner.RunAsync(spawnCts.Token);
-        await Task.Delay(500);
-        await spawnCts.CancelAsync();
-        try { await spawnTask; } catch (OperationCanceledException) { }
-
-        await WaitUntilAsync(async () =>
-        {
-            var resp = await QueryEntitiesAsync(new[] { posType, velType });
-            return resp.Entities.Length > 0;
-        }, TimeSpan.FromSeconds(5));
-
-        // Run a system that applies velocity to position
-        var system = new TickProcessorSystem();
-        system.InvokeOnAdd();
-        var runner = new SystemRunner(system, _nats);
-        using var cts = new CancellationTokenSource();
-        var runTask = runner.RunAsync(cts.Token);
-
-        // Wait for several ticks so position accumulates
-        await WaitUntilAsync(async () =>
-        {
-            await Task.CompletedTask;
-            return Volatile.Read(ref system.TicksProcessed) >= 5;
-        }, TimeSpan.FromSeconds(10));
-
-        await cts.CancelAsync();
-        try { await runTask; } catch (OperationCanceledException) { }
-
-        // Query the coordinator and verify position actually changed
-        var entities = await QueryEntitiesAsync(new[] { posType, velType });
-        Assert.NotEmpty(entities.Entities);
-
-        // Find our entity by matching velocity
-        EntitySnapshot? match = null;
-        foreach (var e in entities.Entities)
-        {
-            if (!e.Components.ContainsKey(velType)) continue;
-            var v = MessagePackSerializer.Deserialize<TestVelocity>(e.Components[velType]);
-            if (Math.Abs(v.Vx - 10.0f) < 0.01f && Math.Abs(v.Vy - 5.0f) < 0.01f)
-            {
-                match = e;
-                break;
-            }
+            if ((await QuerySystems(probe)).Systems.All(s => s.Name != "ReadOnly")) return;
+            await Task.Delay(50);
         }
-        Assert.NotNull(match);
 
-        var finalPos = MessagePackSerializer.Deserialize<TestPosition>(match.Components[posType]);
-        Assert.True(finalPos.X > 0.0f,
-            $"Expected Position.X > 0 after system ticks, got {finalPos.X}");
-        Assert.True(finalPos.Y > 0.0f,
-            $"Expected Position.Y > 0 after system ticks, got {finalPos.Y}");
+        Assert.Fail("the system never unregistered");
+    }
+
+    private static async Task<QuerySystemsResponse> QuerySystems(NatsConnection nats)
+    {
+        var reply = await nats.RequestAsync<byte[], byte[]>(
+            Subjects.QuerySystems,
+            new QuerySystemsRequest().ToByteArray(),
+            replyOpts: new NatsSubOpts { Timeout = Timeout });
+
+        // With no systems registered the response is an empty message, which is zero
+        // bytes, which NATS delivers as no payload at all.
+        return QuerySystemsResponse.Parser.ParseFrom(reply.Data ?? []);
+    }
+
+    [Fact]
+    public async Task WritingATypeTheQueryDeclaredReadOnlyIsRefusedByTheSdk()
+    {
+        fixture.EnsureAvailable();
+        await using var ecs = await ConnectAsync();
+        var world = ecs.GetWorld(Guid.NewGuid().ToString("N"));
+
+        world.Commands.CreateEntity(new TestPosition());
+        await world.FlushAsync();
+
+        var system = new SmugglerSystem();
+        world.AddSystem(system);
+
+        await WaitUntil(() => system.Failed is not null, "the system was never invoked");
+
+        Assert.IsType<InvalidOperationException>(system.Failed);
+        await world.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InstanceIdsAreUnique()
+    {
+        await using var nats = new NatsConnection(new NatsOpts { Url = fixture.Url });
+
+        var first = new SystemRunner(new ReadOnlySystem(), nats);
+        var second = new SystemRunner(new ReadOnlySystem(), nats);
+
+        Assert.NotEqual(first.InstanceId, second.InstanceId);
     }
 }

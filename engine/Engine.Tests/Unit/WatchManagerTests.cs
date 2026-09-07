@@ -1,137 +1,97 @@
+using Ecs.Protocol.V1;
 using Engine.Coordinator;
-using Engine.Core.Messages;
 
 namespace Engine.Tests.Unit;
 
-[Trait("Category", "Unit")]
 public class WatchManagerTests
 {
-    [Fact]
-    public void Register_ReturnsResponseWithDataSubject()
+    private static WatchRequest Request(string id, bool systems = true, bool entities = true) => new()
     {
-        var wm = new WatchManager();
-        var watchId = Guid.NewGuid();
+        WatchId = id,
+        IncludeSystems = systems,
+        IncludeEntities = entities,
+    };
 
-        var response = wm.Register(new WatchRequest
-        {
-            WatchId = watchId,
-            IncludeSystems = true,
-            IncludeEntities = true
-        });
+    [Fact]
+    public void Register_AnswersWithTheSubjectToListenOn()
+    {
+        var watches = new WatchManager();
 
-        Assert.Equal(watchId, response.WatchId);
-        Assert.Equal($"engine.watch.data.{watchId}", response.DataSubject);
+        var response = watches.Register(Request("w1"));
+
+        Assert.Equal("w1", response.WatchId);
+        Assert.Equal("engine.world.watch.data.w1", response.DataSubject);
+        Assert.Single(watches.ActiveWatches());
     }
 
     [Fact]
-    public void Register_AddsToActiveWatches()
+    public void Cancel_RemovesTheWatchAndToleratesAnUnknownId()
     {
-        var wm = new WatchManager();
-        var watchId = Guid.NewGuid();
+        var watches = new WatchManager();
+        watches.Register(Request("w1"));
 
-        wm.Register(new WatchRequest { WatchId = watchId, IncludeSystems = true, IncludeEntities = true });
+        watches.Cancel("w1");
+        watches.Cancel("never-registered");
 
-        var watches = wm.GetActiveWatches();
-        Assert.Single(watches);
-        Assert.Equal(watchId, watches[0].WatchId);
+        Assert.Empty(watches.ActiveWatches());
     }
 
     [Fact]
-    public void Cancel_RemovesWatch()
+    public void Systems_AreSentOnceAndThenOnlyWhenTheyChange()
     {
-        var wm = new WatchManager();
-        var watchId = Guid.NewGuid();
-        wm.Register(new WatchRequest { WatchId = watchId, IncludeSystems = true, IncludeEntities = false });
+        var watches = new WatchManager();
+        var spec = watches.ActiveWatchFor(Request("w1"));
 
-        wm.Cancel(watchId);
+        Assert.True(watches.ClaimSystems(spec));
+        Assert.False(watches.ClaimSystems(spec));
 
-        Assert.Empty(wm.GetActiveWatches());
+        watches.NotifySystemsChanged();
+        Assert.True(watches.ClaimSystems(spec));
     }
 
     [Fact]
-    public void Cancel_NonExistent_NoError()
+    public void SystemsAreNeverSentToAWatcherThatDidNotAskForThem()
     {
-        var wm = new WatchManager();
-        wm.Cancel(Guid.NewGuid()); // Should not throw
+        var watches = new WatchManager();
+        var spec = watches.ActiveWatchFor(Request("w1", systems: false));
+
+        Assert.False(watches.ClaimSystems(spec));
     }
 
     [Fact]
-    public void ShouldIncludeSystems_ReturnsTrueOnFirstCall()
+    public void Schemas_AreSentOncePerRegistryVersion()
     {
-        var wm = new WatchManager();
-        var watchId = Guid.NewGuid();
-        wm.Register(new WatchRequest { WatchId = watchId, IncludeSystems = true, IncludeEntities = false });
+        var watches = new WatchManager();
+        var spec = watches.ActiveWatchFor(Request("w1"));
 
-        var spec = wm.GetActiveWatches()[0];
-        Assert.True(wm.ShouldIncludeSystems(spec));
+        Assert.True(watches.ClaimSchemas(spec, 3));
+        Assert.False(watches.ClaimSchemas(spec, 3));
+
+        // A new component type was bound, so the watcher needs the descriptors to
+        // decode anything using it.
+        Assert.True(watches.ClaimSchemas(spec, 4));
     }
 
     [Fact]
-    public void ShouldIncludeSystems_ReturnsFalseIfNoChange()
+    public void Register_KeepsTheEntityFilter()
     {
-        var wm = new WatchManager();
-        var watchId = Guid.NewGuid();
-        wm.Register(new WatchRequest { WatchId = watchId, IncludeSystems = true, IncludeEntities = false });
+        var watches = new WatchManager();
+        var request = Request("w1");
+        request.Filter = new EntityFilter { AllOf = { "movement.v1.Position" } };
 
-        var spec = wm.GetActiveWatches()[0];
-        wm.ShouldIncludeSystems(spec); // first call consumes
+        watches.Register(request);
 
-        // Second call without NotifySystemsChanged → false
-        spec = wm.GetActiveWatches()[0];
-        Assert.False(wm.ShouldIncludeSystems(spec));
+        var spec = Assert.Single(watches.ActiveWatches());
+        Assert.Equal(["movement.v1.Position"], spec.Filter!.AllOf);
     }
+}
 
-    [Fact]
-    public void ShouldIncludeSystems_ReturnsTrueAfterSystemsChanged()
+internal static class WatchManagerTestExtensions
+{
+    /// <summary>Registers and returns the stored spec, which is what the tick loop works with.</summary>
+    public static WatchSpec ActiveWatchFor(this WatchManager watches, WatchRequest request)
     {
-        var wm = new WatchManager();
-        var watchId = Guid.NewGuid();
-        wm.Register(new WatchRequest { WatchId = watchId, IncludeSystems = true, IncludeEntities = false });
-
-        var spec = wm.GetActiveWatches()[0];
-        wm.ShouldIncludeSystems(spec); // consume initial
-
-        wm.NotifySystemsChanged();
-
-        spec = wm.GetActiveWatches()[0];
-        Assert.True(wm.ShouldIncludeSystems(spec));
-    }
-
-    [Fact]
-    public void ShouldIncludeSystems_FalseWhenIncludeSystemsIsFalse()
-    {
-        var wm = new WatchManager();
-        wm.Register(new WatchRequest { WatchId = Guid.NewGuid(), IncludeSystems = false, IncludeEntities = true });
-
-        var spec = wm.GetActiveWatches()[0];
-        Assert.False(wm.ShouldIncludeSystems(spec));
-    }
-
-    [Fact]
-    public void GetActiveWatches_ReturnsSnapshot()
-    {
-        var wm = new WatchManager();
-        wm.Register(new WatchRequest { WatchId = Guid.NewGuid(), IncludeSystems = true, IncludeEntities = true });
-        wm.Register(new WatchRequest { WatchId = Guid.NewGuid(), IncludeSystems = false, IncludeEntities = true });
-
-        var watches = wm.GetActiveWatches();
-        Assert.Equal(2, watches.Count);
-    }
-
-    [Fact]
-    public void Register_PreservesComponentFilter()
-    {
-        var wm = new WatchManager();
-        wm.Register(new WatchRequest
-        {
-            WatchId = Guid.NewGuid(),
-            IncludeSystems = false,
-            IncludeEntities = true,
-            ComponentFilter = ["Position", "Velocity"]
-        });
-
-        var spec = wm.GetActiveWatches()[0];
-        Assert.NotNull(spec.ComponentFilter);
-        Assert.Equal(["Position", "Velocity"], spec.ComponentFilter);
+        watches.Register(request);
+        return watches.ActiveWatches().Single(w => w.WatchId == request.WatchId);
     }
 }

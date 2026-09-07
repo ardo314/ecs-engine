@@ -1,315 +1,254 @@
-using System.Collections.Concurrent;
-using Engine.Core.Messages;
-using MessagePack;
+using System.Threading.Channels;
+using Ecs.Protocol.V1;
+using Google.Protobuf;
 using NATS.Client.Core;
 
 namespace Engine.Coordinator;
 
 /// <summary>
-/// Manages NATS subscriptions for system registration, unregistration, and entity spawn requests.
+/// Owns every coordinator subscription except the tick loop's own publishing.
 /// </summary>
-public class NatsHandlers
+/// <remarks>
+/// Results arrive on a single long-lived subscription and are handed to the tick loop
+/// through a channel rather than by subscribing and unsubscribing per stage. A result
+/// that misses its stage is then still received and explicitly refused, instead of
+/// vanishing into an unsubscribed subject.
+/// </remarks>
+public sealed class NatsHandlers
 {
     private readonly NatsConnection _nats;
-    private readonly SystemRegistry _registry;
+    private readonly SchemaRegistry _schemas;
+    private readonly SystemRegistry _systems;
     private readonly WorldState _world;
-    private readonly WatchManager _watchManager;
-    private readonly ConcurrentQueue<EntitySpawnRequest> _pendingSpawns;
-    private readonly ConcurrentQueue<EntityDestroyRequest> _pendingDestroys = new();
-    private readonly ConcurrentQueue<ComponentAddRequest> _pendingAdds = new();
-    private readonly ConcurrentQueue<ComponentRemoveRequest> _pendingRemoves = new();
+    private readonly WatchManager _watches;
 
-    public ConcurrentQueue<EntityDestroyRequest> PendingDestroys => _pendingDestroys;
-    public ConcurrentQueue<ComponentAddRequest> PendingAdds => _pendingAdds;
-    public ConcurrentQueue<ComponentRemoveRequest> PendingRemoves => _pendingRemoves;
+    private readonly Channel<SystemResult> _results =
+        Channel.CreateUnbounded<SystemResult>(new UnboundedChannelOptions { SingleReader = true });
 
-    public NatsHandlers(NatsConnection nats, SystemRegistry registry, WorldState world, WatchManager watchManager, ConcurrentQueue<EntitySpawnRequest> pendingSpawns)
+    private readonly Queue<StructuralCommand> _pending = new();
+    private readonly Lock _pendingGate = new();
+
+    private readonly TaskCompletionSource _ready =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public NatsHandlers(
+        NatsConnection nats,
+        SchemaRegistry schemas,
+        SystemRegistry systems,
+        WorldState world,
+        WatchManager watches)
     {
         _nats = nats;
-        _registry = registry;
+        _schemas = schemas;
+        _systems = systems;
         _world = world;
-        _watchManager = watchManager;
-        _pendingSpawns = pendingSpawns;
+        _watches = watches;
     }
 
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>
-    /// Completes when all subscriptions are active.
-    /// </summary>
+    /// <summary>Completes once every subscription is live.</summary>
     public Task Ready => _ready.Task;
 
+    /// <summary>Results returned by systems, drained by the tick loop.</summary>
+    public ChannelReader<SystemResult> Results => _results.Reader;
+
     /// <summary>
-    /// Starts all background NATS subscriptions. Returns when cancelled.
+    /// Takes everything buffered since the last call. Commands are applied at the tick's
+    /// synchronisation point, never as they arrive.
     /// </summary>
+    public List<StructuralCommand> DrainCommands()
+    {
+        lock (_pendingGate)
+        {
+            var drained = new List<StructuralCommand>(_pending);
+            _pending.Clear();
+            return drained;
+        }
+    }
+
+    public void EnqueueCommands(IEnumerable<StructuralCommand> commands)
+    {
+        lock (_pendingGate)
+        {
+            foreach (var command in commands) _pending.Enqueue(command);
+        }
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var regSub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.register", cancellationToken: cancellationToken);
-        var unregSub = await _nats.SubscribeCoreAsync<byte[]>("engine.system.unregister", cancellationToken: cancellationToken);
-        var spawnSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.spawn.request", cancellationToken: cancellationToken);
-        var destroySub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.destroy.request", cancellationToken: cancellationToken);
-        var compAddSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.component.add", cancellationToken: cancellationToken);
-        var compRemoveSub = await _nats.SubscribeCoreAsync<byte[]>("engine.entity.component.remove", cancellationToken: cancellationToken);
-        var querySystemsSub = await _nats.SubscribeCoreAsync<byte[]>("engine.query.systems", cancellationToken: cancellationToken);
-        var queryEntitiesSub = await _nats.SubscribeCoreAsync<byte[]>("engine.query.entities", cancellationToken: cancellationToken);
-        var watchSubSub = await _nats.SubscribeCoreAsync<byte[]>("engine.watch.subscribe", cancellationToken: cancellationToken);
-        var watchUnsubSub = await _nats.SubscribeCoreAsync<byte[]>("engine.watch.unsubscribe", cancellationToken: cancellationToken);
+        var subscriptions = new[]
+        {
+            Reply<RegisterSchemasRequest>(Subjects.SchemaRegister, RegisterSchemasRequest.Parser,
+                request => RegisterSchemas(request), cancellationToken),
+
+            Listen(Subjects.SystemRegister, SystemRegistration.Parser, registration =>
+            {
+                _systems.Register(registration);
+                _watches.NotifySystemsChanged();
+            }, cancellationToken),
+
+            Listen(Subjects.SystemUnregister, SystemUnregistration.Parser, unregistration =>
+            {
+                _systems.Unregister(unregistration);
+                _watches.NotifySystemsChanged();
+            }, cancellationToken),
+
+            Listen(Subjects.SystemResult, SystemResult.Parser,
+                result => _results.Writer.TryWrite(result), cancellationToken),
+
+            Reply<CommandBatch>(Subjects.WorldCommand, CommandBatch.Parser, batch =>
+            {
+                EnqueueCommands(batch.Commands);
+                return new CommandBatchAck();
+            }, cancellationToken),
+
+            Reply<QuerySystemsRequest>(Subjects.QuerySystems, QuerySystemsRequest.Parser,
+                _ => BuildSystemsResponse(), cancellationToken),
+
+            Reply<QueryEntitiesRequest>(Subjects.QueryEntities, QueryEntitiesRequest.Parser,
+                request => BuildEntitiesResponse(request.Filter, includeTypes: true), cancellationToken),
+
+            Reply<WatchRequest>(Subjects.WatchSubscribe, WatchRequest.Parser,
+                request => _watches.Register(request), cancellationToken),
+
+            Listen(Subjects.WatchCancel, WatchCancel.Parser,
+                cancel => _watches.Cancel(cancel.WatchId), cancellationToken),
+        };
 
         _ready.TrySetResult();
-        Console.WriteLine("[Coordinator] NATS subscriptions active.");
-
-        var regTask = ProcessRegistrations(regSub, cancellationToken);
-        var unregTask = ProcessUnregistrations(unregSub, cancellationToken);
-        var spawnTask = ProcessSpawnRequests(spawnSub, cancellationToken);
-        var destroyTask = ProcessDestroyRequests(destroySub, cancellationToken);
-        var compAddTask = ProcessComponentAdds(compAddSub, cancellationToken);
-        var compRemoveTask = ProcessComponentRemoves(compRemoveSub, cancellationToken);
-        var querySystemsTask = ProcessQuerySystems(querySystemsSub, cancellationToken);
-        var queryEntitiesTask = ProcessQueryEntities(queryEntitiesSub, cancellationToken);
-        var watchSubTask = ProcessWatchSubscribe(watchSubSub, cancellationToken);
-        var watchUnsubTask = ProcessWatchUnsubscribe(watchUnsubSub, cancellationToken);
-
-        await Task.WhenAll(regTask, unregTask, spawnTask, destroyTask, compAddTask, compRemoveTask, querySystemsTask, queryEntitiesTask, watchSubTask, watchUnsubTask);
+        await Task.WhenAll(subscriptions);
     }
 
-    private async Task ProcessRegistrations(INatsSub<byte[]> sub, CancellationToken cancellationToken)
+    private RegisterSchemasResponse RegisterSchemas(RegisterSchemasRequest request)
     {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var descriptor = MessagePackSerializer.Deserialize<SystemDescriptor>(msg.Data!);
-                _registry.Register(descriptor);
-                _watchManager.NotifySystemsChanged();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to deserialize registration: {ex.Message}");
-            }
-        }
-    }
+        var response = _schemas.Register(request);
 
-    private async Task ProcessUnregistrations(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
+        // A type's declared description is replayed as ordinary AddComponent commands on
+        // its type entity. The engine never interprets them — that is what lets a domain
+        // attach an open set of contracts (a `Setting` marker, a `Category`, ...) to a
+        // component type without the engine knowing what any of them mean. The type
+        // entity itself is created by the tick loop's synchronisation point.
+        foreach (var declaration in request.Declarations)
         {
-            try
-            {
-                var unreg = MessagePackSerializer.Deserialize<SystemUnregister>(msg.Data!);
-                _registry.Unregister(unreg);
-                _watchManager.NotifySystemsChanged();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to deserialize unregister: {ex.Message}");
-            }
-        }
-    }
+            if (declaration.Type is null || declaration.Description.Count == 0) continue;
 
-    private async Task ProcessSpawnRequests(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
+            EnqueueCommands(declaration.Description.Select(value => new StructuralCommand
             {
-                var req = MessagePackSerializer.Deserialize<EntitySpawnRequest>(msg.Data!);
-                _pendingSpawns.Enqueue(req);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to deserialize spawn request: {ex.Message}");
-            }
-        }
-    }
-
-    private async Task ProcessDestroyRequests(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var req = MessagePackSerializer.Deserialize<EntityDestroyRequest>(msg.Data!);
-                _pendingDestroys.Enqueue(req);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to deserialize destroy request: {ex.Message}");
-            }
-        }
-    }
-
-    private async Task ProcessComponentAdds(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var req = MessagePackSerializer.Deserialize<ComponentAddRequest>(msg.Data!);
-                _pendingAdds.Enqueue(req);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to deserialize component add: {ex.Message}");
-            }
-        }
-    }
-
-    private async Task ProcessComponentRemoves(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var req = MessagePackSerializer.Deserialize<ComponentRemoveRequest>(msg.Data!);
-                _pendingRemoves.Enqueue(req);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to deserialize component remove: {ex.Message}");
-            }
-        }
-    }
-
-    private async Task ProcessQuerySystems(INatsSub<byte[]> sub, CancellationToken cancellationToken)    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var response = BuildSystemsResponse();
-                var payload = MessagePackSerializer.Serialize(response);
-                if (msg.ReplyTo is not null)
+                Add = new AddComponent
                 {
-                    await _nats.PublishAsync(msg.ReplyTo, payload, cancellationToken: cancellationToken);
-                }
+                    Target = new CommandTarget { ComponentType = declaration.Type.LogicalName },
+                    Component = value,
+                },
+            }));
+        }
+
+        return response;
+    }
+
+    public QuerySystemsResponse BuildSystemsResponse()
+    {
+        var response = new QuerySystemsResponse();
+
+        foreach (var system in _systems.UniqueSystems())
+        {
+            var info = new SystemInfo
+            {
+                Name = system.Name,
+                InstanceId = system.InstanceId,
+            };
+            info.Queries.AddRange(system.Queries);
+            info.Reads.AddRange(SystemRegistry.ReadsOf(system));
+            info.Writes.AddRange(SystemRegistry.WritesOf(system));
+            response.Systems.Add(info);
+        }
+
+        var tags = _world.ResolveTags(_systems.UniqueSystems().SelectMany(SystemRegistry.TagsOf));
+        foreach (var stage in _systems.ComputeStages(tags))
+        {
+            var encoded = new Stage();
+            encoded.Systems.AddRange(stage.Select(s => s.Name));
+            response.Stages.Add(encoded);
+        }
+
+        return response;
+    }
+
+    public QueryEntitiesResponse BuildEntitiesResponse(EntityFilter? filter, bool includeTypes)
+    {
+        var response = new QueryEntitiesResponse();
+
+        foreach (var entityId in _world.Filter(filter))
+        {
+            var snapshot = new EntitySnapshot { Entity = entityId };
+            foreach (var (typeId, payload) in _world.ComponentsOf(entityId))
+            {
+                snapshot.Components.Add(new ComponentBinding
+                {
+                    TypeId = typeId,
+                    Payload = ByteString.CopyFrom(payload),
+                });
+            }
+            response.Entities.Add(snapshot);
+        }
+
+        if (includeTypes)
+            response.ComponentTypes.AddRange(DescribeTypes());
+
+        return response;
+    }
+
+    /// <summary>
+    /// The whole schema registry, as an observer needs it: dense id, exact identity and
+    /// the descriptors to decode payloads it was never compiled against.
+    /// </summary>
+    public List<ComponentTypeInfo> DescribeTypes() =>
+        [.. _schemas.All().Select(type => type.ToInfo(_world.FindTypeEntity(type.TypeId) ?? 0))];
+
+    // ── Subscription plumbing ───────────────────────────────────
+
+    private async Task Listen<T>(
+        string subject,
+        MessageParser<T> parser,
+        Action<T> handle,
+        CancellationToken cancellationToken)
+        where T : IMessage<T>
+    {
+        await foreach (var message in _nats.SubscribeAsync<byte[]>(
+            subject, cancellationToken: cancellationToken))
+        {
+            if (message.Data is null) continue;
+
+            try
+            {
+                handle(parser.ParseFrom(message.Data));
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Coordinator] Failed to handle query.systems: {ex.Message}");
+                Console.Error.WriteLine($"[Nats] {subject}: {ex.Message}");
             }
         }
     }
 
-    private async Task ProcessQueryEntities(INatsSub<byte[]> sub, CancellationToken cancellationToken)
+    private async Task Reply<T>(
+        string subject,
+        MessageParser<T> parser,
+        Func<T, IMessage> handle,
+        CancellationToken cancellationToken)
+        where T : IMessage<T>
     {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
+        await foreach (var message in _nats.SubscribeAsync<byte[]>(
+            subject, cancellationToken: cancellationToken))
         {
             try
             {
-                QueryEntitiesRequest? request = null;
-                if (msg.Data is { Length: > 0 })
-                {
-                    request = MessagePackSerializer.Deserialize<QueryEntitiesRequest>(msg.Data);
-                }
-
-                var response = BuildEntitiesResponse(request?.ComponentFilter, request?.AnyTypes);
-                var payload = MessagePackSerializer.Serialize(response);
-                if (msg.ReplyTo is not null)
-                {
-                    await _nats.PublishAsync(msg.ReplyTo, payload, cancellationToken: cancellationToken);
-                }
+                // An empty request body is a valid "no arguments" call.
+                var request = parser.ParseFrom(message.Data ?? []);
+                await message.ReplyAsync(handle(request).ToByteArray(),
+                    cancellationToken: cancellationToken);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Coordinator] Failed to handle query.entities: {ex.Message}");
+                Console.Error.WriteLine($"[Nats] {subject}: {ex.Message}");
             }
         }
-    }
-
-    private async Task ProcessWatchSubscribe(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var request = MessagePackSerializer.Deserialize<WatchRequest>(msg.Data!);
-                var response = _watchManager.Register(request);
-                var payload = MessagePackSerializer.Serialize(response);
-                if (msg.ReplyTo is not null)
-                {
-                    await _nats.PublishAsync(msg.ReplyTo, payload, cancellationToken: cancellationToken);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to handle watch.subscribe: {ex.Message}");
-            }
-        }
-    }
-
-    private async Task ProcessWatchUnsubscribe(INatsSub<byte[]> sub, CancellationToken cancellationToken)
-    {
-        await foreach (var msg in sub.Msgs.ReadAllAsync(cancellationToken))
-        {
-            try
-            {
-                var cancel = MessagePackSerializer.Deserialize<WatchCancel>(msg.Data!);
-                _watchManager.Cancel(cancel.WatchId);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Coordinator] Failed to handle watch.unsubscribe: {ex.Message}");
-            }
-        }
-    }
-
-    internal QuerySystemsResponse BuildSystemsResponse()
-    {
-        var unique = _registry.GetUniqueSystems();
-        var stages = _registry.ComputeStages();
-
-        var systemInfos = unique.Select(s => new SystemInfo
-        {
-            Name = s.Name,
-            InstanceId = s.InstanceId,
-            Reads = s.GetAllReads(),
-            Writes = s.GetAllWrites(),
-            Queries = s.Queries
-        }).ToArray();
-
-        var stageNames = stages.Select(stage =>
-            stage.Select(s => s.Name).ToArray()
-        ).ToArray();
-
-        return new QuerySystemsResponse
-        {
-            Systems = systemInfos,
-            Stages = stageNames
-        };
-    }
-
-    internal QueryEntitiesResponse BuildEntitiesResponse(string[]? componentFilter, string[]? anyTypes = null)
-    {
-        IEnumerable<ulong> entities;
-        if (componentFilter is { Length: > 0 })
-        {
-            entities = _world.GetEntitiesWith(componentFilter);
-        }
-        else if (anyTypes is { Length: > 0 })
-        {
-            entities = _world.GetEntitiesWithAny(anyTypes);
-        }
-        else
-        {
-            entities = _world.GetAllEntities();
-        }
-
-        if (componentFilter is { Length: > 0 } && anyTypes is { Length: > 0 })
-        {
-            var any = anyTypes.ToHashSet();
-            entities = entities.Where(id => _world.GetComponentTypes(id).Any(any.Contains));
-        }
-
-        var snapshots = new List<EntitySnapshot>();
-        foreach (var entityId in entities)
-        {
-            var comps = _world.GetAllComponents(entityId);
-            snapshots.Add(new EntitySnapshot
-            {
-                EntityId = entityId,
-                Components = comps != null ? new Dictionary<string, byte[]>(comps) : new()
-            });
-        }
-
-        return new QueryEntitiesResponse { Entities = snapshots.ToArray() };
     }
 }

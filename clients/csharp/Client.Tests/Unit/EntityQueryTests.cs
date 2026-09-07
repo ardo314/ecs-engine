@@ -1,419 +1,326 @@
-using Client;
+using Ecs.Protocol;
+using Ecs.Protocol.V1;
 using Engine.Core;
-using Engine.Core.Messages;
-using MessagePack;
+using Google.Protobuf;
+using Testing.V1;
 
 namespace Client.Tests.Unit;
 
-public record struct TestPosition(float X, float Y) : IComponent;
-
-public record struct TestVelocity(float Vx, float Vy) : IComponent;
-
-public record struct TestDisabled() : IComponent;
-
-[Trait("Category", "Unit")]
 public class EntityQueryTests
 {
-    public EntityQueryTests()
+    private const uint PositionId = 10;
+    private const uint VelocityId = 20;
+    private const uint DisabledId = 30;
+    private const uint SettingId = 40;
+    private const uint DescribedId = 50;
+
+    private static SchemaBindings Bindings()
     {
-        Serialization.Initialize();
+        var bindings = new SchemaBindings();
+        bindings.Add(ComponentType<TestPosition>.Name, PositionId);
+        bindings.Add(ComponentType<TestVelocity>.Name, VelocityId);
+        bindings.Add(ComponentType<TestDisabled>.Name, DisabledId);
+        bindings.Add(ComponentType<TestSetting>.Name, SettingId);
+        bindings.Add(ComponentType<TestDescribed>.Name, DescribedId);
+        return bindings;
     }
 
-    private static Dictionary<string, (ulong[] Entities, byte[][] Data)> MakeShards(
-        params (string TypeName, (ulong Id, byte[] Data)[])[] entries)
+    private static EntityQuery Ready(Action<EntityQuery> declare)
     {
-        var shards = new Dictionary<string, (ulong[], byte[][])>();
-        foreach (var (typeName, items) in entries)
+        var query = new EntityQuery();
+        declare(query);
+        query.Freeze();
+        query.Bind(Bindings());
+        return query;
+    }
+
+    /// <summary>Builds the column set a coordinator invocation would carry.</summary>
+    private static Dictionary<uint, ComponentColumn> Columns(
+        params (uint TypeId, ulong Entity, byte[]? Payload)[] rows)
+    {
+        return rows
+            .GroupBy(r => r.TypeId)
+            .ToDictionary(
+                g => g.Key,
+                g => new ComponentColumn(
+                    g.Key,
+                    [.. g.Select(r => r.Entity)],
+                    [.. g.Select(r => r.Payload)]));
+    }
+
+    private static SystemInvocation Invocation(params TagResolution[] tags)
+    {
+        var invocation = new SystemInvocation { Tick = 1, LeaseId = "lease", DeltaSeconds = 0.05f };
+        invocation.Tags.AddRange(tags);
+        return invocation;
+    }
+
+    private static byte[] Position(float x) => new TestPosition { X = x }.ToByteArray();
+
+    // ── Descriptor ──────────────────────────────────────────────
+
+    [Fact]
+    public void Descriptor_CarriesTypeIdsAndAccess()
+    {
+        var query = Ready(q => q
+            .With(Query.Write<TestPosition>())
+            .With(Query.Read<TestVelocity>()));
+
+        var descriptor = query.ToDescriptor();
+
+        Assert.Contains(descriptor.Required,
+            a => a.TypeId == PositionId && a.Access == Access.Write);
+        Assert.Contains(descriptor.Required,
+            a => a.TypeId == VelocityId && a.Access == Access.Read);
+    }
+
+    [Fact]
+    public void Descriptor_RecordsOptionalExcludedAndTaggedSeparately()
+    {
+        var query = Ready(q =>
         {
-            shards[typeName] = (
-                items.Select(i => i.Id).ToArray(),
-                items.Select(i => i.Data).ToArray());
-        }
-        return shards;
-    }
+            q.With(Query.Read<TestPosition>());
+            q.WithAny(Query.Read<TestVelocity>());
+            q.Without<TestDisabled>();
+            q.WithAnyTagged<TestSetting>();
+        });
 
-    private static byte[] Ser<T>(T value) => MessagePackSerializer.Serialize(value);
+        var descriptor = query.ToDescriptor();
 
-    // ── Builder → Descriptor ───────────────────────────────────
-
-    [Fact]
-    public void ToDescriptor_ReturnsCorrectReadWriteTypes()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .With(Query.ReadWrite<TestVelocity>());
-        query.Freeze();
-
-        var desc = query.ToDescriptor();
-        Assert.Contains(ComponentTypeId.Of<TestPosition>().TypeName, desc.ReadTypes);
-        Assert.Contains(ComponentTypeId.Of<TestVelocity>().TypeName, desc.WriteTypes);
-        Assert.Contains(ComponentTypeId.Of<TestPosition>().TypeName, desc.RequiredTypes);
-        Assert.Contains(ComponentTypeId.Of<TestVelocity>().TypeName, desc.RequiredTypes);
+        Assert.Equal(VelocityId, Assert.Single(descriptor.Optional).TypeId);
+        Assert.Equal(DisabledId, Assert.Single(descriptor.Excluded));
+        Assert.Equal(SettingId, Assert.Single(descriptor.Tagged).TagTypeId);
     }
 
     [Fact]
-    public void ToDescriptor_WithAny_SetsOptionalTypes()
+    public void Declaring_AfterFreezeThrows()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAny(Query.ReadOnly<TestVelocity>());
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()));
 
-        var desc = query.ToDescriptor();
-        Assert.Contains(ComponentTypeId.Of<TestVelocity>().TypeName, desc.OptionalTypes);
+        var error = Assert.Throws<InvalidOperationException>(() => query.With(Query.Read<TestVelocity>()));
+        Assert.Contains("constructor", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ToDescriptor_Without_SetsExcludedTypes()
+    public void Declarations_CoverEveryTypeTheQueryMentions()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .Without<TestDisabled>();
-        query.Freeze();
+        var query = new EntityQuery();
+        query.With(Query.Read<TestPosition>()).Without<TestDisabled>().WithAnyTagged<TestSetting>();
 
-        var desc = query.ToDescriptor();
-        Assert.Contains(ComponentTypeId.Of<TestDisabled>().TypeName, desc.ExcludedTypes);
+        var names = query.Declarations().Select(d => d.Type.LogicalName).ToList();
+
+        Assert.Contains("testing.v1.TestPosition", names);
+        Assert.Contains("testing.v1.TestDisabled", names);
+        Assert.Contains("testing.v1.TestSetting", names);
     }
 
-    // ── Populate + Entities ────────────────────────────────────
+    // ── Matching ────────────────────────────────────────────────
 
     [Fact]
-    public void Entities_ReturnsMatchingEntities()
+    public void RequiredTypes_MustAllBePresent()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .With(Query.ReadOnly<TestVelocity>());
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).With(Query.Read<TestVelocity>()));
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (PositionId, 2, Position(2)),
+            (VelocityId, 1, []),
+            (VelocityId, 2, null)), Invocation());
 
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
-        // Entity 2 only has Position → should not match
-
-        query.Populate(shards, tickId: 1);
-
-        Assert.Single(query.Entities);
-        Assert.Equal(1UL, query.Entities[0].Id);
+        Assert.Equal([new Entity(1)], query.Entities);
     }
 
     [Fact]
-    public void Entities_WithAny_FiltersCorrectly()
+    public void OptionalTypes_RequireAtLeastOne()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAny(Query.ReadOnly<TestVelocity>());
-        query.Freeze();
+        var query = Ready(q =>
+        {
+            q.With(Query.Read<TestPosition>());
+            q.WithAny(Query.Read<TestVelocity>(), Query.Read<TestDisabled>());
+        });
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (PositionId, 2, Position(2)),
+            (VelocityId, 1, []),
+            (VelocityId, 2, null),
+            (DisabledId, 1, null),
+            (DisabledId, 2, null)), Invocation());
 
-        // Entity 1 has both, entity 2 has only Position
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
-
-        query.Populate(shards, tickId: 1);
-
-        // Only entity 1 has the optional type
-        Assert.Single(query.Entities);
-        Assert.Equal(1UL, query.Entities[0].Id);
+        Assert.Equal([new Entity(1)], query.Entities);
     }
 
     [Fact]
-    public void Entities_Without_ExcludesCorrectly()
+    public void ExcludedTypes_RemoveTheEntity()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .Without<TestDisabled>();
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).Without<TestDisabled>());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var disabledType = ComponentTypeId.Of<TestDisabled>().TypeName;
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (PositionId, 2, Position(2)),
+            (DisabledId, 1, null),
+            (DisabledId, 2, [])), Invocation());
 
-        // Entity 1 has Position only, entity 2 has Position + Disabled
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (disabledType, [(2, Ser(new TestDisabled()))]));
-
-        query.Populate(shards, tickId: 1);
-
-        Assert.Single(query.Entities);
-        Assert.Equal(1UL, query.Entities[0].Id);
+        Assert.Equal([new Entity(1)], query.Entities);
     }
 
     [Fact]
-    public void Entities_EmptyShards_ReturnsEmpty()
+    public void AZeroLengthPayloadIsPresent_ANullPayloadIsAbsent()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
+        // An all-default protobuf message is zero bytes, so a marker component and a
+        // missing component would be indistinguishable if length carried absence.
+        Assert.Empty(new TestDisabled().ToByteArray());
 
-        query.Populate(new Dictionary<string, (ulong[], byte[][])>(), tickId: 1);
+        var query = Ready(q => q.With(Query.Read<TestDisabled>()));
+
+        query.Populate(Columns(
+            (DisabledId, 1, []),
+            (DisabledId, 2, null)), Invocation());
+
+        Assert.Equal([new Entity(1)], query.Entities);
+    }
+
+    [Fact]
+    public void AnEmptyInvocationMatchesNothing()
+    {
+        var query = Ready(q => q.With(Query.Read<TestPosition>()));
+
+        query.Populate(new Dictionary<uint, ComponentColumn>(), Invocation());
 
         Assert.Empty(query.Entities);
     }
 
-    // ── Get / TryGet / Has ─────────────────────────────────────
+    // ── Reading and writing ─────────────────────────────────────
 
     [Fact]
-    public void Get_ReturnsDeserializedComponent()
+    public void Get_ReturnsTheDecodedComponent()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()));
+        query.Populate(Columns((PositionId, 1, Position(2.5f))), Invocation());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(10f, 20f)))]));
-        query.Populate(shards, tickId: 1);
-
-        var pos = query.Get<TestPosition>(new Entity(1));
-        Assert.Equal(10f, pos.X);
-        Assert.Equal(20f, pos.Y);
-    }
-
-    [Fact]
-    public void Get_ThrowsOnMissingEntity()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
-        query.Populate(new Dictionary<string, (ulong[], byte[][])>(), tickId: 1);
-
-        Assert.Throws<KeyNotFoundException>(() => query.Get<TestPosition>(new Entity(999)));
-    }
-
-    [Fact]
-    public void TryGet_ReturnsFalseOnMissing()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
-        query.Populate(new Dictionary<string, (ulong[], byte[][])>(), tickId: 1);
-
-        Assert.False(query.TryGet<TestPosition>(new Entity(999), out _));
-    }
-
-    [Fact]
-    public void TryGet_ReturnsTrueAndValue()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
-
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(7f, 8f)))]));
-        query.Populate(shards, tickId: 1);
-
-        Assert.True(query.TryGet<TestPosition>(new Entity(1), out var pos));
-        Assert.Equal(7f, pos.X);
-    }
-
-    [Fact]
-    public void Has_ReturnsTrueWhenPresent()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
-
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
-        query.Populate(shards, tickId: 1);
-
+        Assert.Equal(2.5f, query.Get<TestPosition>(new Entity(1)).X);
         Assert.True(query.Has<TestPosition>(new Entity(1)));
-        Assert.False(query.Has<TestPosition>(new Entity(999)));
-    }
-
-    // ── Set ────────────────────────────────────────────────────
-
-    [Fact]
-    public void Set_ReadWrite_BuffersMutation()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadWrite<TestPosition>());
-        query.Freeze();
-
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
-        query.Populate(shards, tickId: 42);
-
-        query.Set(new Entity(1), new TestPosition(99f, 100f));
-
-        var mutations = query.FlushMutations();
-        Assert.Single(mutations);
-        Assert.Equal(posType, mutations[0].ComponentType);
-        Assert.Equal(42UL, mutations[0].TickId);
-        Assert.Equal(1UL, mutations[0].Entities[0]);
     }
 
     [Fact]
-    public void Set_ReadOnly_Throws()
+    public void Get_ThrowsForAnEntityItDoesNotHold()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()));
+        query.Populate(Columns((PositionId, 1, Position(1))), Invocation());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
-        query.Populate(shards, tickId: 1);
-
-        Assert.Throws<InvalidOperationException>(() =>
-            query.Set(new Entity(1), new TestPosition(99f, 100f)));
+        Assert.Throws<KeyNotFoundException>(() => query.Get<TestPosition>(new Entity(99)));
+        Assert.False(query.TryGet<TestPosition>(new Entity(99), out _));
     }
 
     [Fact]
-    public void FlushMutations_ClearsBuffer()
+    public void Set_BuffersAWriteAsABatch()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadWrite<TestPosition>());
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Write<TestPosition>()));
+        query.Populate(Columns((PositionId, 1, Position(1))), Invocation());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
-        query.Populate(shards, tickId: 1);
+        query.Set(new Entity(1), new TestPosition { X = 9f });
+        var batch = Assert.Single(query.FlushWrites());
 
-        query.Set(new Entity(1), new TestPosition(5f, 6f));
-        Assert.Single(query.FlushMutations());
-        Assert.Empty(query.FlushMutations());
-    }
-
-    // ── Each ───────────────────────────────────────────────────
-
-    [Fact]
-    public void Each_ReturnsTuplesWithEntity()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .With(Query.ReadOnly<TestVelocity>());
-        query.Freeze();
-
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
-
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
-            (velType, [(1, Ser(new TestVelocity(3f, 4f)))]));
-        query.Populate(shards, tickId: 1);
-
-        var results = query.Each<TestPosition, TestVelocity>().ToList();
-        Assert.Single(results);
-        Assert.Equal(1UL, results[0].Entity.Id);
-        Assert.Equal(1f, results[0].C1.X);
-        Assert.Equal(3f, results[0].C2.Vx);
-    }
-
-    // ── Tag joins ──────────────────────────────────────────────
-
-    [Fact]
-    public void ToDescriptor_WithAnyTagged_SetsTaggedTypes()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAnyTagged<TestSetting>();
-        query.Freeze();
-
-        var desc = query.ToDescriptor();
-        Assert.Contains(ComponentTypeId.Of<TestSetting>().TypeName, desc.TaggedTypes);
+        Assert.Equal(PositionId, batch.TypeId);
+        var column = ComponentBatchCodecs.Decode(batch);
+        Assert.Equal([1ul], column.Entities);
+        Assert.Equal(9f, TestPosition.Parser.ParseFrom(column.Rows[0]).X);
     }
 
     [Fact]
-    public void WithAnyTagged_MatchesEntitiesCarryingAResolvedType()
+    public void Flush_EmptiesTheBuffer()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAnyTagged<TestSetting>();
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Write<TestPosition>()));
+        query.Populate(Columns((PositionId, 1, Position(1))), Invocation());
+        query.Set(new Entity(1), new TestPosition { X = 9f });
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
-
-        // Entity 1 and 2 both have Position, but only entity 1 carries the tagged type
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f))), (2, Ser(new TestPosition(3f, 4f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
-
-        query.Populate(shards, tickId: 1, TagResolution(velType));
-
-        Assert.Single(query.Entities);
-        Assert.Equal(1UL, query.Entities[0].Id);
+        Assert.Single(query.FlushWrites());
+        Assert.Empty(query.FlushWrites());
     }
 
     [Fact]
-    public void WithAnyTagged_NoResolvedTypes_MatchesNothing()
+    public void Set_OnAReadOnlyTypeThrowsBeforeItReachesTheNetwork()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAnyTagged<TestSetting>();
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()));
+        query.Populate(Columns((PositionId, 1, Position(1))), Invocation());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var shards = MakeShards((posType, [(1, Ser(new TestPosition(1f, 2f)))]));
+        var error = Assert.Throws<InvalidOperationException>(
+            () => query.Set(new Entity(1), new TestPosition { X = 1f }));
 
-        query.Populate(shards, tickId: 1, TagResolution());
+        Assert.Contains("read-only", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Each_YieldsTuplesForEntitiesHoldingEveryComponent()
+    {
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).With(Query.Read<TestVelocity>()));
+
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (VelocityId, 1, new TestVelocity { Vx = 5f }.ToByteArray())), Invocation());
+
+        var (entity, position, velocity) = Assert.Single(query.Each<TestPosition, TestVelocity>());
+        Assert.Equal(new Entity(1), entity);
+        Assert.Equal(1f, position.X);
+        Assert.Equal(5f, velocity.Vx);
+    }
+
+    // ── Tag joins ───────────────────────────────────────────────
+
+    [Fact]
+    public void TagJoin_MatchesEntitiesCarryingAResolvedType()
+    {
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).WithAnyTagged<TestSetting>());
+
+        var tags = new TagResolution { TagTypeId = SettingId, TypeIds = { DescribedId } };
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (PositionId, 2, Position(2)),
+            (DescribedId, 1, new TestDescribed { Value = 7 }.ToByteArray()),
+            (DescribedId, 2, null)), Invocation(tags));
+
+        Assert.Equal([new Entity(1)], query.Entities);
+        Assert.Equal(["testing.v1.TestDescribed"], query.TaggedTypeNames<TestSetting>());
+    }
+
+    [Fact]
+    public void TagJoin_MatchesNothingWhenNoTypeCarriesTheTag()
+    {
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).WithAnyTagged<TestSetting>());
+
+        query.Populate(Columns((PositionId, 1, Position(1))),
+            Invocation(new TagResolution { TagTypeId = SettingId }));
 
         Assert.Empty(query.Entities);
     }
 
     [Fact]
-    public void GetTagged_ReturnsMatchedComponentsByTypeName()
+    public void GetTagged_HandsBackRawPayloadsThatCanBeDecodedOnceRecognised()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAnyTagged<TestSetting>();
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).WithAnyTagged<TestSetting>());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+        var tags = new TagResolution { TagTypeId = SettingId, TypeIds = { DescribedId } };
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (DescribedId, 1, new TestDescribed { Value = 7 }.ToByteArray())), Invocation(tags));
 
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
-        query.Populate(shards, tickId: 1, TagResolution(velType));
-
-        var tagged = query.GetTagged<TestSetting>(new Entity(1)).ToList();
-
-        Assert.Single(tagged);
-        Assert.True(tagged[0].Is<TestVelocity>());
-        Assert.Equal(5f, tagged[0].As<TestVelocity>().Vx);
+        var tagged = Assert.Single(query.GetTagged<TestSetting>(new Entity(1)));
+        Assert.Equal("testing.v1.TestDescribed", tagged.TypeName);
+        Assert.Equal(7, tagged.As<TestDescribed>()!.Value);
+        Assert.Null(tagged.As<TestPosition>());
     }
 
     [Fact]
-    public void Set_TaggedType_Throws()
+    public void Set_OnATagJoinedTypeThrows()
     {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>())
-            .WithAnyTagged<TestSetting>();
-        query.Freeze();
+        var query = Ready(q => q.With(Query.Read<TestPosition>()).WithAnyTagged<TestSetting>());
 
-        var posType = ComponentTypeId.Of<TestPosition>().TypeName;
-        var velType = ComponentTypeId.Of<TestVelocity>().TypeName;
+        var tags = new TagResolution { TagTypeId = SettingId, TypeIds = { DescribedId } };
+        query.Populate(Columns(
+            (PositionId, 1, Position(1)),
+            (DescribedId, 1, new TestDescribed { Value = 7 }.ToByteArray())), Invocation(tags));
 
-        var shards = MakeShards(
-            (posType, [(1, Ser(new TestPosition(1f, 2f)))]),
-            (velType, [(1, Ser(new TestVelocity(5f, 6f)))]));
-        query.Populate(shards, tickId: 1, TagResolution(velType));
-
-        Assert.Throws<InvalidOperationException>(() =>
-            query.Set(new Entity(1), new TestVelocity(9f, 9f)));
-    }
-
-    private static Dictionary<string, string[]> TagResolution(params string[] typeNames) =>
-        new() { [ComponentTypeId.Of<TestSetting>().TypeName] = typeNames };
-
-    // ── Freeze ─────────────────────────────────────────────────
-
-    [Fact]
-    public void With_AfterFreeze_Throws()
-    {
-        var query = new EntityQuery()
-            .With(Query.ReadOnly<TestPosition>());
-        query.Freeze();
-
-        Assert.Throws<InvalidOperationException>(() =>
-            query.With(Query.ReadOnly<TestVelocity>()));
+        Assert.Throws<InvalidOperationException>(
+            () => query.Set(new Entity(1), new TestDescribed { Value = 8 }));
     }
 }

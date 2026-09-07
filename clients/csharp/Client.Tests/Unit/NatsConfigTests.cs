@@ -6,18 +6,15 @@ namespace Client.Tests.Unit;
 public class NatsConfigTests : IDisposable
 {
     private readonly string? _url = Environment.GetEnvironmentVariable("NATS_URL");
-    private readonly string? _broker = Environment.GetEnvironmentVariable("NATS_BROKER");
 
     public NatsConfigTests()
     {
         Environment.SetEnvironmentVariable("NATS_URL", null);
-        Environment.SetEnvironmentVariable("NATS_BROKER", null);
     }
 
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("NATS_URL", _url);
-        Environment.SetEnvironmentVariable("NATS_BROKER", _broker);
     }
 
     [Fact]
@@ -29,29 +26,19 @@ public class NatsConfigTests : IDisposable
     }
 
     [Fact]
-    public void ResolveUrl_UsesNatsUrlBeforeNatsBroker()
+    public void ResolveUrl_UsesNatsUrlWhenNoArgumentIsGiven()
     {
         Environment.SetEnvironmentVariable("NATS_URL", "nats://configured:4222");
-        Environment.SetEnvironmentVariable("NATS_BROKER", "nats://injected:4222");
 
         Assert.Equal("nats://configured:4222", NatsConfig.ResolveUrl());
-    }
-
-    [Fact]
-    public void ResolveUrl_FallsBackToNatsBrokerWhenNatsUrlIsUnset()
-    {
-        Environment.SetEnvironmentVariable("NATS_BROKER", "nats://injected:4222");
-
-        Assert.Equal("nats://injected:4222", NatsConfig.ResolveUrl());
     }
 
     [Fact]
     public void ResolveUrl_IgnoresBlankValues()
     {
         Environment.SetEnvironmentVariable("NATS_URL", "   ");
-        Environment.SetEnvironmentVariable("NATS_BROKER", "nats://injected:4222");
 
-        Assert.Equal("nats://injected:4222", NatsConfig.ResolveUrl());
+        Assert.Equal(NatsConfig.DefaultUrl, NatsConfig.ResolveUrl());
     }
 
     [Fact]

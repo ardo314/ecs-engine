@@ -1,0 +1,22 @@
+{
+  "name": "ecs-engine",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "proto/gen/ts",
+    "clients/typescript",
+    "editor",
+    "examples/typescript/movement-system",
+    "deployments/nova"
+  ],
+  "scripts": {
+    "proto:lint": "buf lint",
+    "proto:format": "buf format -w",
+    "proto:generate": "buf generate",
+    "build": "npm run build --workspace @ecs/protos && npm run build --workspace @ecs/client && npm run build --workspace @ecs/editor && npm run build --workspace @ecs/nova-installer",
+    "test": "npm run test --workspace @ecs/client && npm run test --workspace @ecs/editor && npm run test --workspace @ecs/nova-installer"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.50.0"
+  }
+}

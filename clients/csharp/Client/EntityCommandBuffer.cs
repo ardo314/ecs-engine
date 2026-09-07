@@ -1,113 +1,129 @@
-using Engine.Core.Messages;
-using MessagePack;
+using Ecs.Protocol.V1;
+using Google.Protobuf;
 
 namespace Engine.Core;
 
 /// <summary>
-/// Buffers structural changes (create, destroy, add/remove component) to be
-/// played onto the world by the coordinator. Commands target an <see cref="CommandTarget"/>,
-/// so the same API addresses both entities and component type entities.
+/// Buffers structural changes for the coordinator to apply at its next synchronisation
+/// point.
 /// </summary>
-public class EntityCommandBuffer
+/// <remarks>
+/// Systems never mutate the world's topology while iterating it. Spawns, despawns and
+/// component add/remove go in here and are returned with the tick's result; the world
+/// plays them all at one deterministic point. That is what keeps archetype migration,
+/// iteration stability and distributed synchronisation from becoming a problem.
+///
+/// The buffer also collects the schemas it touches, so a type introduced by a command
+/// is registered before the command that needs it is sent.
+/// </remarks>
+public sealed class EntityCommandBuffer
 {
-    private readonly List<EntitySpawnRequest> _spawns = new();
-    private readonly List<ulong> _destroys = new();
-    private readonly List<ComponentAddRequest> _adds = new();
-    private readonly List<ComponentRemoveRequest> _removes = new();
+    private readonly List<StructuralCommand> _commands = new();
+    private readonly Dictionary<string, ComponentTypeDeclaration> _schemas = new(StringComparer.Ordinal);
 
-    // Types already described to the coordinator; survives Clear() for the buffer's lifetime.
-    private readonly HashSet<string> _described = new();
-    private readonly HashSet<string> _announced = new();
+    public IReadOnlyList<StructuralCommand> Commands => _commands;
 
-    public IReadOnlyList<EntitySpawnRequest> Spawns => _spawns;
-    public IReadOnlyList<ulong> Destroys => _destroys;
-    public IReadOnlyList<ComponentAddRequest> Adds => _adds;
-    public IReadOnlyList<ComponentRemoveRequest> Removes => _removes;
+    /// <summary>Schemas referenced by the buffered commands, for the registration handshake.</summary>
+    public IReadOnlyCollection<ComponentTypeDeclaration> Schemas => _schemas.Values;
 
-    /// <summary>
-    /// Buffers a request to create a new entity with the given components.
-    /// </summary>
-    public void CreateEntity(params IComponent[] components)
+    public bool HasPendingCommands => _commands.Count > 0;
+
+    /// <summary>Buffers creation of a new entity carrying the given components.</summary>
+    public void CreateEntity(params IMessage[] components)
     {
-        var types = new string[components.Length];
-        var data = new byte[components.Length][];
-        for (var i = 0; i < components.Length; i++)
+        var spawn = new SpawnEntity();
+        foreach (var component in components)
         {
-            var type = components[i].GetType();
-            types[i] = type.FullName ?? type.Name;
-            data[i] = MessagePackSerializer.Serialize(type, components[i]);
-            Announce(types[i]);
+            var declaration = DeclarationOf(component.Descriptor);
+            Declare(declaration);
+            spawn.Components.Add(new ComponentValue
+            {
+                Type = declaration.Type,
+                Payload = component.ToByteString(),
+            });
         }
-        _spawns.Add(new EntitySpawnRequest { ComponentTypes = types, ComponentData = data });
+
+        _commands.Add(new StructuralCommand { Spawn = spawn });
     }
 
-    /// <summary>
-    /// Buffers a request to destroy an entity.
-    /// </summary>
-    public void DestroyEntity(Entity entity)
-    {
-        _destroys.Add(entity.Id);
-    }
+    public void DestroyEntity(Entity entity) =>
+        _commands.Add(new StructuralCommand { Despawn = new DespawnEntity { Entity = entity.Id } });
 
-    /// <summary>
-    /// Buffers a request to add a component to the target.
-    /// </summary>
-    public void AddComponent<T>(CommandTarget target, T component) where T : IComponent
+    public void AddComponent<T>(CommandTarget target, T component) where T : IMessage<T>, new()
     {
-        Describe<T>();
-        _adds.Add(new ComponentAddRequest
+        Declare(ComponentType<T>.Declaration);
+        _commands.Add(new StructuralCommand
         {
-            Target = target,
-            ComponentType = ComponentTypeId.Of<T>().TypeName,
-            Data = MessagePackSerializer.Serialize(component)
+            Add = new AddComponent
+            {
+                Target = target,
+                Component = ComponentType<T>.Value(component),
+            },
         });
     }
 
-    /// <summary>
-    /// Buffers a request to remove a component from the target.
-    /// </summary>
-    public void RemoveComponent<T>(CommandTarget target) where T : IComponent
+    public void RemoveComponent<T>(CommandTarget target) where T : IMessage<T>, new()
     {
-        Describe<T>();
-        _removes.Add(new ComponentRemoveRequest
+        Declare(ComponentType<T>.Declaration);
+        _commands.Add(new StructuralCommand
         {
-            Target = target,
-            ComponentType = ComponentTypeId.Of<T>().TypeName
+            Remove = new RemoveComponent { Target = target, Type = ComponentType<T>.Ref },
         });
     }
 
+    public void AddComponent<T>(Entity entity, T component) where T : IMessage<T>, new() =>
+        AddComponent(Target.Of(entity), component);
+
+    public void RemoveComponent<T>(Entity entity) where T : IMessage<T>, new() =>
+        RemoveComponent<T>(Target.Of(entity));
+
     /// <summary>
-    /// Buffers the component type's own description, once per buffer.
+    /// Records a type's schema without buffering any command, so a type used only in a
+    /// query still reaches the coordinator's registry.
     /// </summary>
-    internal void Describe<T>() where T : IComponent
+    public void Declare(ComponentTypeDeclaration declaration) =>
+        _schemas.TryAdd(declaration.Type.LogicalName, declaration);
+
+    public void Declare<T>() where T : IMessage<T>, new() => Declare(ComponentType<T>.Declaration);
+
+    public void Clear() => _commands.Clear();
+
+    /// <summary>Takes the buffered commands, leaving the buffer empty.</summary>
+    internal List<StructuralCommand> Drain()
     {
-        if (_described.Add(ComponentTypeId.Of<T>().TypeName))
-            Description<T>.Apply(this);
+        var drained = new List<StructuralCommand>(_commands);
+        _commands.Clear();
+        return drained;
     }
 
-    /// <summary>
-    /// Buffers a bare type entity for a component only known by name, once per buffer.
-    /// </summary>
-    private void Announce(string typeName)
+    private static ComponentTypeDeclaration DeclarationOf(Google.Protobuf.Reflection.MessageDescriptor descriptor)
     {
-        if (!_announced.Add(typeName)) return;
+        // CreateEntity takes IMessage rather than a generic parameter, so the cached
+        // per-type declaration is reached reflectively, once per type.
+        return DeclarationCache.GetOrAdd(descriptor);
+    }
+}
 
-        _adds.Add(new ComponentAddRequest
+/// <summary>
+/// Caches declarations for component types only known through <see cref="IMessage"/>.
+/// </summary>
+internal static class DeclarationCache
+{
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ComponentTypeDeclaration> Cache = new();
+
+    public static ComponentTypeDeclaration GetOrAdd(Google.Protobuf.Reflection.MessageDescriptor descriptor) =>
+        Cache.GetOrAdd(descriptor.FullName, _ =>
         {
-            Target = CommandTarget.OfComponentType(typeName),
-            ComponentType = ComponentInfo.Type,
-            Data = MessagePackSerializer.Serialize(new ComponentInfo(typeName))
+            var declaration = new ComponentTypeDeclaration
+            {
+                Type = new ComponentTypeRef
+                {
+                    LogicalName = descriptor.FullName,
+                    SchemaHash = Engine.Core.SchemaHash.Of(descriptor),
+                },
+                FileDescriptorSet = Descriptors.FileDescriptorSetFor(descriptor),
+            };
+            declaration.Description.AddRange(ComponentDescription.Of(descriptor));
+            return declaration;
         });
-    }
-
-    public bool HasPendingCommands =>
-        _spawns.Count > 0 || _destroys.Count > 0 || _adds.Count > 0 || _removes.Count > 0;
-
-    public void Clear()
-    {
-        _spawns.Clear();
-        _destroys.Clear();
-        _adds.Clear();
-        _removes.Clear();
-    }
 }

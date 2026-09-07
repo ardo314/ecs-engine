@@ -1,123 +1,135 @@
-using Engine.Core.Messages;
+using Ecs.Protocol.V1;
 
 namespace Engine.Coordinator;
 
 /// <summary>
-/// Tracks registered systems and computes conflict-free execution stages.
-/// Two systems conflict if one writes a component type that the other reads or writes.
+/// Tracks registered systems and packs them into conflict-free execution stages.
 /// </summary>
-public class SystemRegistry
+/// <remarks>
+/// The scheduler never learns what a component means. It sees a system as two sets of
+/// integers and applies one rule:
+///
+///     conflict(A, B) = A.writes ∩ B.reads  ≠ ∅
+///                   || A.reads  ∩ B.writes ≠ ∅
+///                   || A.writes ∩ B.writes ≠ ∅
+///
+/// so <c>Read&lt;X&gt;</c> pairs with <c>Read&lt;X&gt;</c> and everything else serialises.
+/// Because the rule is expressed over ids alone, a component type introduced at runtime
+/// participates in scheduling without the coordinator being rebuilt.
+/// </remarks>
+public sealed class SystemRegistry
 {
-    private readonly Dictionary<string, SystemDescriptor> _systems = new();
+    private readonly Lock _gate = new();
+    private readonly Dictionary<string, SystemRegistration> _instances = new(StringComparer.Ordinal);
 
-    public void Register(SystemDescriptor descriptor)
+    public void Register(SystemRegistration registration)
     {
-        var key = $"{descriptor.Name}:{descriptor.InstanceId}";
-        _systems[key] = descriptor;
-        Console.WriteLine($"[Registry] Registered system '{descriptor.Name}' (instance {descriptor.InstanceId})");
+        lock (_gate)
+            _instances[$"{registration.Name}:{registration.InstanceId}"] = registration;
+
+        Console.WriteLine(
+            $"[Registry] Registered '{registration.Name}' (instance {registration.InstanceId})");
     }
 
-    public void Unregister(SystemUnregister msg)
+    public void Unregister(SystemUnregistration message)
     {
-        var key = $"{msg.Name}:{msg.InstanceId}";
-        _systems.Remove(key);
-        Console.WriteLine($"[Registry] Unregistered system '{msg.Name}' (instance {msg.InstanceId})");
+        lock (_gate)
+            _instances.Remove($"{message.Name}:{message.InstanceId}");
+
+        Console.WriteLine(
+            $"[Registry] Unregistered '{message.Name}' (instance {message.InstanceId})");
     }
 
     /// <summary>
-    /// Returns the distinct system names that are currently registered (deduplicates instances).
+    /// One representative registration per system name. Instances of the same system are
+    /// interchangeable — they share a queue group, so the coordinator schedules the name.
     /// </summary>
-    public List<string> GetSystemNames() =>
-        _systems.Values.Select(s => s.Name).Distinct().ToList();
-
-    /// <summary>
-    /// Returns one representative descriptor per unique system name.
-    /// </summary>
-    public List<SystemDescriptor> GetUniqueSystems() =>
-        _systems.Values
-            .GroupBy(s => s.Name)
-            .Select(g => g.First())
-            .ToList();
-
-    /// <summary>
-    /// Computes execution stages. Systems within the same stage can run in parallel.
-    /// Systems that conflict (one writes what the other reads/writes) go in separate stages.
-    /// <paramref name="taggedResolution"/> maps tag type names to the component type names
-    /// carrying them, so tag-joined reads participate in conflict detection.
-    /// </summary>
-    public List<List<SystemDescriptor>> ComputeStages(
-        IReadOnlyDictionary<string, string[]>? taggedResolution = null)
+    public List<SystemRegistration> UniqueSystems()
     {
-        var systems = GetUniqueSystems();
-        var stages = new List<List<SystemDescriptor>>();
+        lock (_gate)
+        {
+            return [.. _instances.Values
+                .GroupBy(s => s.Name, StringComparer.Ordinal)
+                .Select(g => g.First())];
+        }
+    }
 
-        var placed = new HashSet<string>();
+    public List<string> SystemNames() => [.. UniqueSystems().Select(s => s.Name)];
+
+    public static HashSet<uint> ReadsOf(SystemRegistration system) =>
+        [.. system.Queries
+            .SelectMany(q => q.Required.Concat(q.Optional))
+            .Where(a => a.Access == Access.Read)
+            .Select(a => a.TypeId)];
+
+    public static HashSet<uint> WritesOf(SystemRegistration system) =>
+        [.. system.Queries
+            .SelectMany(q => q.Required.Concat(q.Optional))
+            .Where(a => a.Access == Access.Write)
+            .Select(a => a.TypeId)];
+
+    public static HashSet<uint> TagsOf(SystemRegistration system) =>
+        [.. system.Queries.SelectMany(q => q.Tagged).Select(t => t.TagTypeId)];
+
+    /// <summary>
+    /// Greedily packs systems into stages. Systems in a stage are proved conflict-free,
+    /// so they run in parallel; stages run in order.
+    /// </summary>
+    /// <param name="tagResolution">
+    /// Tag type id to the component type ids carrying it. Tag joins read whatever they
+    /// resolve to this tick, so those types must participate in conflict detection or a
+    /// tag-reading system could run beside a system writing one of them.
+    /// </param>
+    public List<List<SystemRegistration>> ComputeStages(
+        IReadOnlyDictionary<uint, uint[]>? tagResolution = null)
+    {
+        var systems = UniqueSystems();
+        var stages = new List<List<SystemRegistration>>();
+        var placed = new HashSet<string>(StringComparer.Ordinal);
 
         while (placed.Count < systems.Count)
         {
-            var stage = new List<SystemDescriptor>();
-            var stageWrites = new HashSet<string>();
-            var stageReads = new HashSet<string>();
+            var stage = new List<SystemRegistration>();
+            var stageReads = new HashSet<uint>();
+            var stageWrites = new HashSet<uint>();
 
-            foreach (var sys in systems)
+            foreach (var system in systems)
             {
-                if (placed.Contains(sys.Name))
+                if (placed.Contains(system.Name)) continue;
+
+                var reads = ExpandReads(system, tagResolution);
+                var writes = WritesOf(system);
+
+                if (writes.Overlaps(stageReads) ||
+                    writes.Overlaps(stageWrites) ||
+                    reads.Overlaps(stageWrites))
+                {
                     continue;
-
-                var sysReads = ExpandReads(sys, taggedResolution);
-
-                // Check conflicts with already-placed systems in this stage
-                var conflicts = false;
-
-                // Conflict: this system writes something the stage reads or writes
-                foreach (var w in sys.GetAllWrites())
-                {
-                    if (stageReads.Contains(w) || stageWrites.Contains(w))
-                    {
-                        conflicts = true;
-                        break;
-                    }
                 }
 
-                // Conflict: this system reads something the stage writes
-                if (!conflicts)
-                {
-                    foreach (var r in sysReads)
-                    {
-                        if (stageWrites.Contains(r))
-                        {
-                            conflicts = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!conflicts)
-                {
-                    stage.Add(sys);
-                    placed.Add(sys.Name);
-                    foreach (var w in sys.GetAllWrites()) stageWrites.Add(w);
-                    foreach (var r in sysReads) stageReads.Add(r);
-                }
+                stage.Add(system);
+                placed.Add(system.Name);
+                stageReads.UnionWith(reads);
+                stageWrites.UnionWith(writes);
             }
 
-            if (stage.Count > 0)
-                stages.Add(stage);
+            if (stage.Count == 0) break;
+            stages.Add(stage);
         }
 
         return stages;
     }
 
-    private static HashSet<string> ExpandReads(
-        SystemDescriptor sys,
-        IReadOnlyDictionary<string, string[]>? taggedResolution)
+    private static HashSet<uint> ExpandReads(
+        SystemRegistration system,
+        IReadOnlyDictionary<uint, uint[]>? tagResolution)
     {
-        var reads = new HashSet<string>(sys.GetAllReads());
-        if (taggedResolution is null) return reads;
+        var reads = ReadsOf(system);
+        if (tagResolution is null) return reads;
 
-        foreach (var tag in sys.GetAllTags())
+        foreach (var tag in TagsOf(system))
         {
-            if (taggedResolution.TryGetValue(tag, out var types))
+            if (tagResolution.TryGetValue(tag, out var types))
                 reads.UnionWith(types);
         }
         return reads;

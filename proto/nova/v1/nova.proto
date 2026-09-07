@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package nova.v1;
+
+import "ecs/v1/entity.proto";
+
+// Identifies which Nova cell and controller an entity belongs to. Maps to the
+// Nova API path /cells/{cell}/controllers/{controller}.
+//
+// Deliberately denormalised onto every IO entity so systems can build Nova
+// requests without dereferencing ControllerRef.
+message NovaControllerId {
+  string cell = 1;
+  string controller = 2;
+}
+
+// References the cell entity this entity belongs to.
+message CellRef {
+  ecs.v1.EntityId cell = 1;
+}
+
+// References the controller entity this entity belongs to.
+message ControllerRef {
+  ecs.v1.EntityId controller = 1;
+}
+
+// A desired digital (boolean) output value to set on a controller. Maps to the
+// Nova API IOBooleanValue schema.
+message DigitalOutputRequest {
+  string io = 1;
+  bool value = 2;
+}
+
+// A desired analog integer output value to set on a controller. Maps to the
+// Nova API IOIntegerValue schema.
+message AnalogIntOutputRequest {
+  string io = 1;
+  int64 value = 2;
+}
+
+// A desired analog float output value to set on a controller. Maps to the Nova
+// API IOFloatValue schema.
+message AnalogFloatOutputRequest {
+  string io = 1;
+  double value = 2;
+}
+
+// The last confirmed state of an IO after a successful set operation. Attached
+// to the entity once the system confirms the write.
+message IoOutputState {
+  string io = 1;
+  string value_type = 2;
+  string value = 3;
+  bool confirmed = 4;
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package ecs.v1;
+
+// A reference to an entity. Entities are pure identifiers allocated by the
+// coordinator; they carry no data of their own.
+message EntityId {
+  uint64 id = 1;
+}

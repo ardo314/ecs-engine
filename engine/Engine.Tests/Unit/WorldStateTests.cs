@@ -1,183 +1,196 @@
+using Ecs.Protocol.V1;
 using Engine.Coordinator;
+using Google.Protobuf;
+using Google.Protobuf.Reflection;
+using Testing.V1;
 
 namespace Engine.Tests.Unit;
 
-[Trait("Category", "Unit")]
-public class WorldStateTests
+/// <summary>
+/// Shared setup for tests that need a world with a few types already bound.
+/// </summary>
+public abstract class WorldFixture
 {
-    [Fact]
-    public void AllocateEntity_ReturnsUniqueIds()
-    {
-        var world = new WorldState();
-        var id1 = world.AllocateEntity();
-        var id2 = world.AllocateEntity();
-        var id3 = world.AllocateEntity();
+    protected SchemaRegistry Schemas { get; } = new();
 
-        Assert.Equal(1UL, id1);
-        Assert.Equal(2UL, id2);
-        Assert.Equal(3UL, id3);
+    protected WorldState World { get; }
+
+    protected WorldFixture()
+    {
+        World = new WorldState(Schemas);
+    }
+
+    protected uint Bind(MessageDescriptor descriptor)
+    {
+        var request = new RegisterSchemasRequest();
+        request.Declarations.Add(new ComponentTypeDeclaration
+        {
+            Type = new ComponentTypeRef
+            {
+                LogicalName = descriptor.FullName,
+                SchemaHash = SchemaHash.Of(descriptor),
+            },
+            FileDescriptorSet = Descriptors.FileDescriptorSetFor(descriptor),
+        });
+
+        var response = Schemas.Register(request);
+        Assert.Empty(response.Rejections);
+        return response.Bindings[0].TypeId;
+    }
+}
+
+public class WorldStateTests : WorldFixture
+{
+    private static QueryDescriptor Requiring(params uint[] typeIds)
+    {
+        var query = new QueryDescriptor();
+        foreach (var id in typeIds)
+            query.Required.Add(new Ecs.Protocol.V1.ComponentAccess { TypeId = id, Access = Access.Read });
+        return query;
     }
 
     [Fact]
-    public void AllocateEntity_MarksEntityAlive()
+    public void AllocateEntity_ReturnsUniqueIdsAndMarksThemAlive()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
+        var first = World.AllocateEntity();
+        var second = World.AllocateEntity();
 
-        Assert.True(world.IsAlive(id));
-        Assert.False(world.IsAlive(999));
+        Assert.NotEqual(first, second);
+        Assert.True(World.IsAlive(first));
+        Assert.False(World.IsAlive(9999));
     }
 
     [Fact]
-    public void DestroyEntity_RemovesEntityAndComponents()
+    public void SetComponent_StoresOpaqueBytesUnderTheDenseId()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
-        world.SetComponent(id, "Position", [1, 2, 3]);
+        var position = Bind(TestPosition.Descriptor);
+        var entity = World.AllocateEntity();
+        var payload = new TestPosition { X = 1.5f }.ToByteArray();
 
-        world.DestroyEntity(id);
+        World.SetComponent(entity, position, payload);
 
-        Assert.False(world.IsAlive(id));
-        Assert.Null(world.GetComponent(id, "Position"));
-        Assert.Equal(0, world.EntityCount);
+        Assert.Equal(payload, World.GetComponent(entity, position));
     }
 
     [Fact]
-    public void SetComponent_StoresAndRetrieves()
+    public void SetComponent_OverwritesTheExistingValue()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
-        byte[] data = [10, 20, 30];
+        var position = Bind(TestPosition.Descriptor);
+        var entity = World.AllocateEntity();
 
-        world.SetComponent(id, "Velocity", data);
+        World.SetComponent(entity, position, [1]);
+        World.SetComponent(entity, position, [2]);
 
-        var retrieved = world.GetComponent(id, "Velocity");
-        Assert.NotNull(retrieved);
-        Assert.Equal(data, retrieved);
+        Assert.Equal([2], World.GetComponent(entity, position));
     }
 
     [Fact]
-    public void SetComponent_OverwritesExisting()
+    public void GetComponent_ReturnsNullWhenAbsent()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
-        world.SetComponent(id, "Pos", [1]);
-        world.SetComponent(id, "Pos", [2]);
+        var position = Bind(TestPosition.Descriptor);
 
-        Assert.Equal([2], world.GetComponent(id, "Pos"));
+        Assert.Null(World.GetComponent(World.AllocateEntity(), position));
+        Assert.Null(World.GetComponent(9999, position));
     }
 
     [Fact]
-    public void GetComponent_ReturnsNullForMissing()
+    public void DestroyEntity_RemovesItAndItsComponents()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
+        var position = Bind(TestPosition.Descriptor);
+        var entity = World.AllocateEntity();
+        World.SetComponent(entity, position, [1]);
 
-        Assert.Null(world.GetComponent(id, "NonExistent"));
-        Assert.Null(world.GetComponent(999, "Position"));
+        World.DestroyEntity(entity);
+
+        Assert.False(World.IsAlive(entity));
+        Assert.Null(World.GetComponent(entity, position));
     }
 
     [Fact]
-    public void GetComponentTypes_ReturnsAllTypes()
+    public void MatchQueries_RequiresEveryDeclaredType()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
-        world.SetComponent(id, "Position", [1]);
-        world.SetComponent(id, "Velocity", [2]);
+        var position = Bind(TestPosition.Descriptor);
+        var velocity = Bind(TestVelocity.Descriptor);
 
-        var types = world.GetComponentTypes(id);
+        var both = World.AllocateEntity();
+        World.SetComponent(both, position, []);
+        World.SetComponent(both, velocity, []);
 
-        Assert.Equal(2, types.Count);
-        Assert.Contains("Position", types);
-        Assert.Contains("Velocity", types);
+        var onlyPosition = World.AllocateEntity();
+        World.SetComponent(onlyPosition, position, []);
+
+        var matched = World.MatchQueries([Requiring(position, velocity)], new Dictionary<uint, uint[]>());
+
+        Assert.Equal([both], matched);
     }
 
     [Fact]
-    public void GetEntitiesWith_ReturnsMatchingEntities()
+    public void MatchQueries_TreatsOptionalAsAtLeastOne()
     {
-        var world = new WorldState();
-        var e1 = world.AllocateEntity();
-        world.SetComponent(e1, "Position", [1]);
-        world.SetComponent(e1, "Velocity", [2]);
+        var position = Bind(TestPosition.Descriptor);
+        var velocity = Bind(TestVelocity.Descriptor);
+        var disabled = Bind(TestDisabled.Descriptor);
 
-        var e2 = world.AllocateEntity();
-        world.SetComponent(e2, "Position", [3]);
+        var entity = World.AllocateEntity();
+        World.SetComponent(entity, position, []);
+        World.SetComponent(entity, velocity, []);
 
-        var e3 = world.AllocateEntity();
-        world.SetComponent(e3, "Position", [4]);
-        world.SetComponent(e3, "Velocity", [5]);
-        world.SetComponent(e3, "Health", [6]);
+        var query = Requiring(position);
+        query.Optional.Add(new Ecs.Protocol.V1.ComponentAccess { TypeId = velocity, Access = Access.Read });
+        query.Optional.Add(new Ecs.Protocol.V1.ComponentAccess { TypeId = disabled, Access = Access.Read });
 
-        // Query for entities with both Position and Velocity
-        var result = world.GetEntitiesWith(["Position", "Velocity"]);
-
-        Assert.Equal(2, result.Count);
-        Assert.Contains(e1, result);
-        Assert.Contains(e3, result);
-        Assert.DoesNotContain(e2, result);
+        Assert.Equal([entity], World.MatchQueries([query], new Dictionary<uint, uint[]>()));
     }
 
     [Fact]
-    public void GetEntitiesWith_EmptyFilter_ReturnsAllEntities()
+    public void MatchQueries_HonoursExclusions()
     {
-        var world = new WorldState();
-        var e1 = world.AllocateEntity();
-        var e2 = world.AllocateEntity();
+        var position = Bind(TestPosition.Descriptor);
+        var disabled = Bind(TestDisabled.Descriptor);
 
-        var result = world.GetEntitiesWith([]);
-        Assert.Equal(2, result.Count);
+        var kept = World.AllocateEntity();
+        World.SetComponent(kept, position, []);
+
+        var skipped = World.AllocateEntity();
+        World.SetComponent(skipped, position, []);
+        World.SetComponent(skipped, disabled, []);
+
+        var query = Requiring(position);
+        query.Excluded.Add(disabled);
+
+        Assert.Equal([kept], World.MatchQueries([query], new Dictionary<uint, uint[]>()));
     }
 
     [Fact]
-    public void GetAllEntities_ReturnsAliveEntities()
+    public void MatchQueries_UnionsAcrossQueries()
     {
-        var world = new WorldState();
-        var e1 = world.AllocateEntity();
-        var e2 = world.AllocateEntity();
-        var e3 = world.AllocateEntity();
-        world.DestroyEntity(e2);
+        var position = Bind(TestPosition.Descriptor);
+        var velocity = Bind(TestVelocity.Descriptor);
 
-        var all = world.GetAllEntities();
+        var a = World.AllocateEntity();
+        World.SetComponent(a, position, []);
+        var b = World.AllocateEntity();
+        World.SetComponent(b, velocity, []);
 
-        Assert.Equal(2, all.Count);
-        Assert.Contains(e1, all);
-        Assert.Contains(e3, all);
+        var matched = World.MatchQueries(
+            [Requiring(position), Requiring(velocity)], new Dictionary<uint, uint[]>());
+
+        Assert.Equal(2, matched.Count);
+        Assert.Contains(a, matched);
+        Assert.Contains(b, matched);
     }
 
     [Fact]
-    public void GetAllComponents_ReturnsAllComponentsForEntity()
+    public void Filter_ResolvesNamesAndReturnsNothingForAnUnknownRequirement()
     {
-        var world = new WorldState();
-        var id = world.AllocateEntity();
-        world.SetComponent(id, "Position", [1, 2]);
-        world.SetComponent(id, "Velocity", [3, 4]);
+        var position = Bind(TestPosition.Descriptor);
+        var entity = World.AllocateEntity();
+        World.SetComponent(entity, position, []);
 
-        var comps = world.GetAllComponents(id);
+        var byName = World.Filter(new EntityFilter { AllOf = { "testing.v1.TestPosition" } });
+        Assert.Equal([entity], byName);
 
-        Assert.NotNull(comps);
-        Assert.Equal(2, comps.Count);
-        Assert.Equal([1, 2], comps["Position"]);
-        Assert.Equal([3, 4], comps["Velocity"]);
-    }
-
-    [Fact]
-    public void GetAllComponents_ReturnsNullForDeadEntity()
-    {
-        var world = new WorldState();
-        Assert.Null(world.GetAllComponents(999));
-    }
-
-    [Fact]
-    public void EntityCount_TracksCorrectly()
-    {
-        var world = new WorldState();
-        Assert.Equal(0, world.EntityCount);
-
-        var e1 = world.AllocateEntity();
-        world.AllocateEntity();
-        Assert.Equal(2, world.EntityCount);
-
-        world.DestroyEntity(e1);
-        Assert.Equal(1, world.EntityCount);
+        var unknown = World.Filter(new EntityFilter { AllOf = { "testing.v1.NeverRegistered" } });
+        Assert.Empty(unknown);
     }
 }

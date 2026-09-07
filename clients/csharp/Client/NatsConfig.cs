@@ -4,17 +4,15 @@ namespace Client;
 
 /// <summary>
 /// Builds NATS connection options from explicit values, falling back to the
-/// NATS_URL, NATS_BROKER, NATS_USER and NATS_TOKEN environment variables.
+/// NATS_URL, NATS_USER and NATS_TOKEN environment variables.
 /// </summary>
 public static class NatsConfig
 {
     public const string DefaultUrl = "nats://localhost:4222";
 
-    // NATS_BROKER is injected by hosts that supply their own broker, such as Wandelbots NOVA.
     public static string ResolveUrl(string? url = null) =>
         NullIfEmpty(url)
         ?? NullIfEmpty(Environment.GetEnvironmentVariable("NATS_URL"))
-        ?? NullIfEmpty(Environment.GetEnvironmentVariable("NATS_BROKER"))
         ?? DefaultUrl;
 
     public static string? ResolveUser(string? user = null) =>
@@ -24,8 +22,8 @@ public static class NatsConfig
         NullIfEmpty(token) ?? NullIfEmpty(Environment.GetEnvironmentVariable("NATS_TOKEN"));
 
     /// <summary>
-    /// Masks the credentials in a <c>nats://user:token@host</c> URL, as NOVA's
-    /// NATS_BROKER carries them, so the address can be logged.
+    /// Masks the credentials in a <c>nats://user:token@host</c> URL so the address
+    /// can be logged.
     /// </summary>
     public static string Redact(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.UserInfo.Length > 0

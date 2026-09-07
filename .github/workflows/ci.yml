@@ -9,6 +9,43 @@ on:
   workflow_dispatch:
 
 jobs:
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npx buf lint
+
+      - name: Format
+        run: npx buf format --diff --exit-code
+
+      # Nothing to compare against until main itself carries a buf module; the check
+      # starts enforcing itself as soon as this lands.
+      - name: Breaking changes
+        if: github.event_name == 'pull_request'
+        run: |
+          if git cat-file -e origin/main:buf.yaml 2>/dev/null; then
+            npx buf breaking --against '.git#branch=origin/main'
+          else
+            echo "main has no buf module yet; skipping the breaking-change check."
+          fi
+
+      - name: Generated code is up to date
+        run: |
+          npx buf generate
+          git diff --exit-code -- proto/gen
+
   test-engine:
     runs-on: ubuntu-latest
 
@@ -37,39 +74,36 @@ jobs:
           dotnet build clients/csharp/CSharp.sln --no-restore
 
       - name: Unit tests
-        run: dotnet test engine/Engine.sln --no-build --verbosity normal --filter "Category=Unit"
+        run: |
+          dotnet test engine/Engine.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
+          dotnet test clients/csharp/CSharp.sln --no-build --verbosity normal --filter "FullyQualifiedName~.Unit."
+
+      # The canonical schema rendering is an algorithm, so it cannot be generated from
+      # the schema the way message shapes can. It is pinned instead, and each of the
+      # three implementations — coordinator, C# SDK, TypeScript SDK — checks itself
+      # against the same file.
+      - name: Conformance (coordinator + C# SDK)
+        run: |
+          dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Conformance."
+          dotnet test clients/csharp/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Conformance."
+
+      - name: Conformance vectors are unchanged
+        run: git diff --exit-code -- protocol/conformance
 
       - name: Integration tests (Engine)
-        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "Category=Integration"
+        run: dotnet test engine/Engine.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Integration."
         env:
           NATS_URL: nats://localhost:4222
 
-      - name: Start coordinator for client integration tests
-        run: |
-          dotnet run --project engine/Engine --no-build &
-          sleep 3
-        env:
-          NATS_URL: nats://localhost:4222
-
+      # The client integration tests host a coordinator in-process, so there is no
+      # separate one to start — and a second tick loop on the same NATS would
+      # invoke every system twice.
       - name: Integration tests (Client)
-        run: dotnet test clients/csharp/Client.Tests --no-build --verbosity normal --filter "Category=Integration"
+        run: dotnet test clients/csharp/Client.Tests --no-build --verbosity normal --filter "FullyQualifiedName~.Integration."
         env:
           NATS_URL: nats://localhost:4222
 
-  build-editor-backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
-      - name: Build
-        run: dotnet build editor/backend/EditorBackend.sln
-
-  build-editor-frontend:
+  build-editor:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,27 +115,20 @@ jobs:
 
       - name: Install
         run: npm ci
-        working-directory: editor/frontend
 
       - name: Build
         run: npm run build
-        working-directory: editor/frontend
 
-  test-nova-installer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
+      # Runs the same vectors as the C# suite. Two implementations agreeing on a file
+      # neither owns is what makes the protocol implementable in a third language.
       - name: Test
-        run: dotnet test deployments/nova/NovaInstaller.sln --verbosity normal
+        run: npm test
+
+      - name: Conformance vectors are unchanged
+        run: git diff --exit-code -- protocol/conformance
 
   publish-images:
-    needs: [test-engine, build-editor-backend, build-editor-frontend, test-nova-installer]
+    needs: [proto, test-engine, build-editor]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
@@ -114,7 +141,7 @@ jobs:
       matrix:
         include:
           - name: engine
-            context: ./engine
+            context: .
             dockerfile: ./engine/Dockerfile
           - name: movement-system
             context: .
@@ -122,14 +149,11 @@ jobs:
           - name: nova-systems
             context: .
             dockerfile: ./examples/Nova.Systems/Dockerfile
-          - name: editor-backend
+          - name: editor
             context: .
-            dockerfile: ./editor/backend/Dockerfile
-          - name: editor-frontend
-            context: ./editor/frontend
-            dockerfile: ./editor/frontend/Dockerfile
+            dockerfile: ./editor/Dockerfile
           - name: nova-installer
-            context: ./deployments/nova
+            context: .
             dockerfile: ./deployments/nova/Dockerfile
             # Bakes the revision tag in so the installer deploys images from this same commit.
             build-args: ECS_IMAGE_TAG=sha-${{ github.sha }}

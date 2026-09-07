@@ -1,137 +1,153 @@
+using Ecs.Protocol.V1;
 using Engine.Coordinator;
-using Engine.Core.Messages;
 
 namespace Engine.Tests.Unit;
 
-[Trait("Category", "Unit")]
+/// <summary>
+/// The scheduler works entirely in integers. These tests are written that way on
+/// purpose: if they needed a component type to mean something, the design would be
+/// leaking.
+/// </summary>
 public class SystemRegistryTests
 {
-    private static SystemDescriptor MakeSystem(string name, string[] reads, string[] writes) =>
-        new()
+    private const uint Position = 17;
+    private const uint Velocity = 22;
+    private const uint Health = 31;
+
+    private static SystemRegistration System(string name, uint[] reads, uint[] writes, string? instance = null)
+    {
+        var query = new QueryDescriptor();
+        foreach (var id in reads)
+            query.Required.Add(new Ecs.Protocol.V1.ComponentAccess { TypeId = id, Access = Access.Read });
+        foreach (var id in writes)
+            query.Required.Add(new Ecs.Protocol.V1.ComponentAccess { TypeId = id, Access = Access.Write });
+
+        return new SystemRegistration
         {
             Name = name,
-            InstanceId = Guid.NewGuid().ToString(),
-            Queries = [new QueryDescriptor
-            {
-                RequiredTypes = reads.Concat(writes).Distinct().ToArray(),
-                ReadTypes = reads,
-                WriteTypes = writes
-            }]
+            InstanceId = instance ?? Guid.NewGuid().ToString("N"),
+            Queries = { query },
         };
+    }
+
+    private static List<string> Names(List<List<SystemRegistration>> stages, int index) =>
+        [.. stages[index].Select(s => s.Name).Order(StringComparer.Ordinal)];
 
     [Fact]
-    public void Register_AddsSystem()
+    public void Register_TracksTheSystem()
     {
         var registry = new SystemRegistry();
-        registry.Register(MakeSystem("Movement", ["Velocity"], ["Position"]));
+        registry.Register(System("Movement", [Position], [Velocity]));
 
-        Assert.Single(registry.GetSystemNames());
-        Assert.Equal("Movement", registry.GetSystemNames()[0]);
+        Assert.Equal(["Movement"], registry.SystemNames());
     }
 
     [Fact]
-    public void Register_MultipleInstances_DeduplicatesNames()
+    public void Instances_OfTheSameSystemCollapseToOneScheduledUnit()
     {
         var registry = new SystemRegistry();
-        registry.Register(MakeSystem("Movement", ["Velocity"], ["Position"]));
-        registry.Register(MakeSystem("Movement", ["Velocity"], ["Position"]));
+        registry.Register(System("Movement", [Position], [], "a"));
+        registry.Register(System("Movement", [Position], [], "b"));
 
-        Assert.Single(registry.GetSystemNames());
-        Assert.Single(registry.GetUniqueSystems());
+        Assert.Single(registry.SystemNames());
+        Assert.Single(registry.UniqueSystems());
     }
 
     [Fact]
-    public void Unregister_RemovesSystem()
+    public void Unregister_RemovesOnlyThatInstance()
     {
         var registry = new SystemRegistry();
-        var desc = MakeSystem("AI", ["Health"], ["Action"]);
-        registry.Register(desc);
+        registry.Register(System("Movement", [Position], [], "a"));
+        registry.Register(System("Movement", [Position], [], "b"));
 
-        registry.Unregister(new SystemUnregister { Name = desc.Name, InstanceId = desc.InstanceId });
+        registry.Unregister(new SystemUnregistration { Name = "Movement", InstanceId = "a" });
 
-        Assert.Empty(registry.GetSystemNames());
+        Assert.Single(registry.SystemNames());
     }
 
     [Fact]
-    public void ComputeStages_NonConflicting_SameStage()
+    public void SharedReadsRunInParallel()
     {
         var registry = new SystemRegistry();
-        registry.Register(MakeSystem("Movement", ["Velocity"], ["Position"]));
-        registry.Register(MakeSystem("AI", ["Health"], ["Action"]));
+        registry.Register(System("A", [Position], []));
+        registry.Register(System("B", [Position], []));
 
         var stages = registry.ComputeStages();
 
         Assert.Single(stages);
-        Assert.Equal(2, stages[0].Count);
+        Assert.Equal(["A", "B"], Names(stages, 0));
     }
 
     [Fact]
-    public void ComputeStages_WriteReadConflict_SeparateStages()
+    public void AWriteAgainstAReadIsSerialised()
     {
         var registry = new SystemRegistry();
-        // Physics writes Transform, Render reads Transform → conflict
-        registry.Register(MakeSystem("Physics", [], ["Transform"]));
-        registry.Register(MakeSystem("Render", ["Transform"], []));
+        registry.Register(System("Writer", [], [Position]));
+        registry.Register(System("Reader", [Position], []));
+
+        Assert.Equal(2, registry.ComputeStages().Count);
+    }
+
+    [Fact]
+    public void TwoWritesToTheSameTypeAreSerialised()
+    {
+        var registry = new SystemRegistry();
+        registry.Register(System("A", [], [Position]));
+        registry.Register(System("B", [], [Position]));
+
+        Assert.Equal(2, registry.ComputeStages().Count);
+    }
+
+    [Fact]
+    public void DisjointWritesRunInParallel()
+    {
+        var registry = new SystemRegistry();
+        registry.Register(System("A", [], [Position]));
+        registry.Register(System("B", [], [Health]));
+
+        Assert.Single(registry.ComputeStages());
+    }
+
+    [Fact]
+    public void AChainOfDependenciesProducesAStagePerLink()
+    {
+        var registry = new SystemRegistry();
+        registry.Register(System("A", [Position], [Velocity]));
+        registry.Register(System("B", [Velocity], [Health]));
+        registry.Register(System("C", [Position], [], "c"));
 
         var stages = registry.ComputeStages();
 
+        // A writes Velocity, B reads it: they cannot share a stage. C only reads
+        // Position, which A also only reads, so it joins A.
         Assert.Equal(2, stages.Count);
-        Assert.Single(stages[0]);
-        Assert.Single(stages[1]);
+        Assert.Equal(["A", "C"], Names(stages, 0));
+        Assert.Equal(["B"], Names(stages, 1));
     }
 
     [Fact]
-    public void ComputeStages_WriteWriteConflict_SeparateStages()
+    public void ATagJoinConflictsWithAWriteToWhateverItResolvedTo()
     {
         var registry = new SystemRegistry();
-        registry.Register(MakeSystem("SystemA", [], ["Health"]));
-        registry.Register(MakeSystem("SystemB", [], ["Health"]));
+        registry.Register(new SystemRegistration
+        {
+            Name = "Reader",
+            InstanceId = "r",
+            Queries = { new QueryDescriptor { Tagged = { new TaggedAccess { TagTypeId = 99 } } } },
+        });
+        registry.Register(System("Writer", [], [Position]));
 
-        var stages = registry.ComputeStages();
+        // With no resolution the tag reads nothing, so the two can share a stage.
+        Assert.Single(registry.ComputeStages());
 
-        Assert.Equal(2, stages.Count);
+        // Once the tag resolves to Position, the reader is reading what the writer writes.
+        var resolution = new Dictionary<uint, uint[]> { [99] = [Position] };
+        Assert.Equal(2, registry.ComputeStages(resolution).Count);
     }
 
     [Fact]
-    public void ComputeStages_Empty_ReturnsEmpty()
+    public void AnEmptyRegistryHasNothingToSchedule()
     {
-        var registry = new SystemRegistry();
-        Assert.Empty(registry.ComputeStages());
-    }
-
-    [Fact]
-    public void ComputeStages_ComplexConflicts_ProducesCorrectStages()
-    {
-        var registry = new SystemRegistry();
-        // A writes X, B reads X (conflict), C writes Y (no conflict with A)
-        registry.Register(MakeSystem("A", [], ["X"]));
-        registry.Register(MakeSystem("B", ["X"], []));
-        registry.Register(MakeSystem("C", [], ["Y"]));
-
-        var stages = registry.ComputeStages();
-
-        // A and C can run together (no conflict), B must be separate
-        Assert.Equal(2, stages.Count);
-        var stage1Names = stages[0].Select(s => s.Name).ToList();
-        var stage2Names = stages[1].Select(s => s.Name).ToList();
-
-        Assert.Contains("A", stage1Names);
-        Assert.Contains("C", stage1Names);
-        Assert.Contains("B", stage2Names);
-    }
-
-    [Fact]
-    public void GetUniqueSystems_ReturnsOnePerName()
-    {
-        var registry = new SystemRegistry();
-        registry.Register(MakeSystem("Movement", ["Vel"], ["Pos"]));
-        registry.Register(MakeSystem("Movement", ["Vel"], ["Pos"]));
-        registry.Register(MakeSystem("AI", ["Health"], []));
-
-        var unique = registry.GetUniqueSystems();
-
-        Assert.Equal(2, unique.Count);
-        Assert.Contains(unique, s => s.Name == "Movement");
-        Assert.Contains(unique, s => s.Name == "AI");
+        Assert.Empty(new SystemRegistry().ComputeStages());
     }
 }

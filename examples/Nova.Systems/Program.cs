@@ -1,7 +1,7 @@
 using Client;
 using NATS.Client.Core;
-using Nova.Components;
 using Nova.Systems;
+using Nova.V1;
 
 await using var nats = new NatsConnection(NatsConfig.CreateOpts());
 await nats.ConnectAsync();
@@ -23,19 +23,19 @@ var cell = FirstSet("NOVA_CELL", "CELL_NAME") ?? "cell";
 var controller = Environment.GetEnvironmentVariable("NOVA_CONTROLLER") ?? "ur10e";
 
 world.Commands.CreateEntity(
-    new NovaControllerId(cell, controller),
-    new DigitalOutputRequest("DO_1", true),
-    new IoOutputState("DO_1", "boolean", "", false));
+    new NovaControllerId { Cell = cell, Controller = controller },
+    new DigitalOutputRequest { Io = "DO_1", Value = true },
+    new IoOutputState { Io = "DO_1", ValueType = "boolean" });
 
 world.Commands.CreateEntity(
-    new NovaControllerId(cell, controller),
-    new AnalogIntOutputRequest("AO_1", 42),
-    new IoOutputState("AO_1", "integer", "", false));
+    new NovaControllerId { Cell = cell, Controller = controller },
+    new AnalogIntOutputRequest { Io = "AO_1", Value = 42 },
+    new IoOutputState { Io = "AO_1", ValueType = "integer" });
 
 world.Commands.CreateEntity(
-    new NovaControllerId(cell, controller),
-    new AnalogFloatOutputRequest("AO_2", 3.14),
-    new IoOutputState("AO_2", "float", "", false));
+    new NovaControllerId { Cell = cell, Controller = controller },
+    new AnalogFloatOutputRequest { Io = "AO_2", Value = 3.14 },
+    new IoOutputState { Io = "AO_2", ValueType = "float" });
 
 await world.FlushAsync();
 Console.WriteLine("[SetControllerIO] Seeded demo IO entities.");

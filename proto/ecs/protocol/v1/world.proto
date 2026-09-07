@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package ecs.protocol.v1;
+
+import "ecs/protocol/v1/query.proto";
+import "ecs/protocol/v1/schema.proto";
+
+// A component type as the coordinator knows it. Everything an observer needs to
+// decode instances of a type it was never compiled against.
+message ComponentTypeInfo {
+  uint32 type_id = 1;
+  ComponentTypeRef type = 2;
+  bytes file_descriptor_set = 3;
+
+  // The entity that represents this type. User-defined components describing the
+  // type are attached there like on any other entity.
+  uint64 type_entity = 4;
+}
+
+message SystemInfo {
+  string name = 1;
+  string instance_id = 2;
+  repeated QueryDescriptor queries = 3;
+
+  // Union of the reads and writes across all queries — what the scheduler used.
+  repeated uint32 reads = 4;
+  repeated uint32 writes = 5;
+}
+
+// One group of systems the scheduler proved conflict-free, so they run together.
+message Stage {
+  repeated string systems = 1;
+}
+
+message QuerySystemsRequest {}
+
+message QuerySystemsResponse {
+  repeated SystemInfo systems = 1;
+  repeated Stage stages = 2;
+}
+
+message EntityFilter {
+  // Protobuf full names. Names rather than ids so an observer can filter before
+  // it has seen the schema registry.
+  repeated string all_of = 1;
+  repeated string any_of = 2;
+}
+
+message QueryEntitiesRequest {
+  EntityFilter filter = 1;
+}
+
+message EntitySnapshot {
+  uint64 entity = 1;
+  repeated ComponentBinding components = 2;
+}
+
+// A stored component, addressed by dense id. Decode it with the descriptors from
+// the matching ComponentTypeInfo.
+message ComponentBinding {
+  uint32 type_id = 1;
+  bytes payload = 2;
+}
+
+message QueryEntitiesResponse {
+  repeated EntitySnapshot entities = 1;
+  repeated ComponentTypeInfo component_types = 2;
+}
+
+message WatchRequest {
+  string watch_id = 1;
+  bool include_systems = 2;
+  bool include_entities = 3;
+  EntityFilter filter = 4;
+}
+
+message WatchResponse {
+  string watch_id = 1;
+  string data_subject = 2;
+}
+
+message WatchCancel {
+  string watch_id = 1;
+}
+
+// Pushed once per tick. `systems`, `stages` and `component_types` are sent only
+// when they have changed since the watcher last saw them, so a steady world costs
+// entities alone.
+message WatchData {
+  string watch_id = 1;
+  uint64 tick = 2;
+  repeated SystemInfo systems = 3;
+  repeated Stage stages = 4;
+  repeated EntitySnapshot entities = 5;
+  repeated ComponentTypeInfo component_types = 6;
+}

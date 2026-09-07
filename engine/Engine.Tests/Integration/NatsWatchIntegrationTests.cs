@@ -1,251 +1,147 @@
-using Engine.Core;
-using Engine.Core.Messages;
-using MessagePack;
+using Ecs.Protocol;
+using Ecs.Protocol.V1;
+using Engine.Coordinator;
+using Google.Protobuf;
 using NATS.Client.Core;
 
 namespace Engine.Tests.Integration;
 
-/// <summary>
-/// Integration tests for the watch subscribe/unsubscribe/data push flow over NATS.
-/// Uses the shared coordinator from NatsFixture.
-/// </summary>
 [Collection("NATS")]
-[Trait("Category", "Integration")]
-public class NatsWatchIntegrationTests : IAsyncLifetime
+public class NatsWatchIntegrationTests(NatsFixture fixture)
 {
-    private readonly NatsFixture _fixture;
-    private NatsConnection _clientNats = null!;
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
-    public NatsWatchIntegrationTests(NatsFixture fixture)
+    private async Task<WatchResponse> Subscribe(NatsConnection nats, WatchRequest request)
     {
-        _fixture = fixture;
-    }
+        var reply = await nats.RequestAsync<byte[], byte[]>(
+            Subjects.WatchSubscribe,
+            request.ToByteArray(),
+            replyOpts: new NatsSubOpts { Timeout = Timeout });
 
-    public async Task InitializeAsync()
-    {
-        _fixture.EnsureAvailable();
-        Serialization.Initialize();
-        _clientNats = await _fixture.ConnectAsync();
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _clientNats.DisposeAsync();
+        return WatchResponse.Parser.ParseFrom(reply.Data!);
     }
 
     [Fact]
-    public async Task WatchSubscribe_ReturnsDataSubject()
+    public async Task Subscribing_AnswersWithASubjectAndRegistersTheWatch()
     {
-        var watchId = Guid.NewGuid();
-        var request = new WatchRequest
+        fixture.EnsureAvailable();
+        await using var nats = await fixture.ConnectAsync();
+
+        var watchId = Guid.NewGuid().ToString("N");
+        var response = await Subscribe(nats, new WatchRequest
         {
             WatchId = watchId,
             IncludeSystems = true,
-            IncludeEntities = true
-        };
-
-        var reply = await _clientNats.RequestAsync<byte[], byte[]>(
-            "engine.watch.subscribe",
-            MessagePackSerializer.Serialize(request),
-            cancellationToken: new CancellationTokenSource(5000).Token);
-
-        var response = MessagePackSerializer.Deserialize<WatchResponse>(reply.Data!);
+            IncludeEntities = true,
+        });
 
         Assert.Equal(watchId, response.WatchId);
-        Assert.Equal($"engine.watch.data.{watchId}", response.DataSubject);
-
-        // Cleanup
-        _fixture.WatchManager.Cancel(watchId);
+        Assert.Equal($"engine.world.watch.data.{watchId}", response.DataSubject);
+        Assert.Contains(fixture.WatchManager.ActiveWatches(), w => w.WatchId == watchId);
     }
 
     [Fact]
-    public async Task WatchSubscribe_CreatesActiveWatch()
+    public async Task Cancelling_RemovesTheWatch()
     {
-        var watchId = Guid.NewGuid();
-        var request = new WatchRequest
+        fixture.EnsureAvailable();
+        await using var nats = await fixture.ConnectAsync();
+
+        var watchId = Guid.NewGuid().ToString("N");
+        await Subscribe(nats, new WatchRequest { WatchId = watchId, IncludeEntities = true });
+
+        await nats.PublishAsync(
+            Subjects.WatchCancel, new WatchCancel { WatchId = watchId }.ToByteArray());
+
+        var deadline = DateTime.UtcNow + Timeout;
+        while (DateTime.UtcNow < deadline &&
+               fixture.WatchManager.ActiveWatches().Any(w => w.WatchId == watchId))
         {
-            WatchId = watchId,
-            IncludeSystems = true,
-            IncludeEntities = false
+            await Task.Delay(50);
+        }
+
+        Assert.DoesNotContain(fixture.WatchManager.ActiveWatches(), w => w.WatchId == watchId);
+    }
+
+    [Fact]
+    public async Task WatchData_CarriesEntitiesAndTheSchemasToDecodeThem()
+    {
+        fixture.EnsureAvailable();
+        await using var nats = await fixture.ConnectAsync();
+
+        var declaration = new ComponentTypeDeclaration
+        {
+            Type = new ComponentTypeRef
+            {
+                LogicalName = Testing.V1.TestPosition.Descriptor.FullName,
+                SchemaHash = SchemaHash.Of(Testing.V1.TestPosition.Descriptor),
+            },
+            FileDescriptorSet = Descriptors.FileDescriptorSetFor(Testing.V1.TestPosition.Descriptor),
         };
 
-        await _clientNats.RequestAsync<byte[], byte[]>(
-            "engine.watch.subscribe",
-            MessagePackSerializer.Serialize(request),
-            cancellationToken: new CancellationTokenSource(5000).Token);
+        var schemas = new RegisterSchemasRequest { Declarations = { declaration } };
+        var bound = RegisterSchemasResponse.Parser.ParseFrom(
+            (await nats.RequestAsync<byte[], byte[]>(
+                Subjects.SchemaRegister,
+                schemas.ToByteArray(),
+                replyOpts: new NatsSubOpts { Timeout = Timeout })).Data!);
 
-        var watches = _fixture.WatchManager.GetActiveWatches();
-        Assert.Contains(watches, w => w.WatchId == watchId);
+        var typeId = bound.Bindings[0].TypeId;
+        var entity = fixture.World.AllocateEntity();
+        fixture.World.SetComponent(
+            entity, typeId, new Testing.V1.TestPosition { X = 3.5f }.ToByteArray());
 
-        // Cleanup
-        _fixture.WatchManager.Cancel(watchId);
-    }
-
-    [Fact]
-    public async Task WatchUnsubscribe_RemovesWatch()
-    {
-        var watchId = Guid.NewGuid();
-
-        // Subscribe first
-        await _clientNats.RequestAsync<byte[], byte[]>(
-            "engine.watch.subscribe",
-            MessagePackSerializer.Serialize(new WatchRequest
-            {
-                WatchId = watchId,
-                IncludeSystems = true,
-                IncludeEntities = true
-            }),
-            cancellationToken: new CancellationTokenSource(5000).Token);
-
-        Assert.Contains(_fixture.WatchManager.GetActiveWatches(), w => w.WatchId == watchId);
-
-        // Unsubscribe
-        await _clientNats.PublishAsync("engine.watch.unsubscribe",
-            MessagePackSerializer.Serialize(new WatchCancel { WatchId = watchId }));
-
-        await Task.Delay(300);
-
-        Assert.DoesNotContain(_fixture.WatchManager.GetActiveWatches(), w => w.WatchId == watchId);
-    }
-
-    [Fact]
-    public async Task WatchDataPush_DeliversEntityData()
-    {
-        // Set up an entity
-        var e = _fixture.World.AllocateEntity();
-        _fixture.World.SetComponent(e, "WatchPos", [42]);
-
-        // Subscribe a watch via NATS
-        var watchId = Guid.NewGuid();
-        var reply = await _clientNats.RequestAsync<byte[], byte[]>(
-            "engine.watch.subscribe",
-            MessagePackSerializer.Serialize(new WatchRequest
-            {
-                WatchId = watchId,
-                IncludeSystems = true,
-                IncludeEntities = true
-            }),
-            cancellationToken: new CancellationTokenSource(5000).Token);
-
-        var watchResponse = MessagePackSerializer.Deserialize<WatchResponse>(reply.Data!);
-
-        // Subscribe to the data subject BEFORE pushing
-        var dataSub = await _clientNats.SubscribeCoreAsync<byte[]>(
-            watchResponse.DataSubject);
-
-        // Simulate what the tick loop does: push watch data
-        var watches = _fixture.WatchManager.GetActiveWatches();
-        var watch = watches.First(w => w.WatchId == watchId);
-
-        var data = new WatchData { WatchId = watch.WatchId, TickId = 1 };
-
-        if (_fixture.WatchManager.ShouldIncludeSystems(watch))
-        {
-            var sysResp = _fixture.Handlers.BuildSystemsResponse();
-            data = data with { Systems = sysResp.Systems, Stages = sysResp.Stages };
-        }
-
-        if (watch.IncludeEntities)
-        {
-            var entResp = _fixture.Handlers.BuildEntitiesResponse(watch.ComponentFilter);
-            data = data with { Entities = entResp.Entities };
-        }
-
-        var coordNats = await _fixture.ConnectAsync();
-        await coordNats.PublishAsync(watch.DataSubject, MessagePackSerializer.Serialize(data));
-
-        // Read the data from the subscription
-        using var readCts = new CancellationTokenSource(5000);
-        WatchData? received = null;
-
-        await foreach (var msg in dataSub.Msgs.ReadAllAsync(readCts.Token))
-        {
-            received = MessagePackSerializer.Deserialize<WatchData>(msg.Data!);
-            break;
-        }
-
-        Assert.NotNull(received);
-        Assert.Equal(watchId, received.WatchId);
-        Assert.Equal(1UL, received.TickId);
-        Assert.NotNull(received.Entities);
-        Assert.Contains(received.Entities, ent => ent.EntityId == e);
-
-        var entity = received.Entities.First(ent => ent.EntityId == e);
-        Assert.True(entity.Components.ContainsKey("WatchPos"));
-        Assert.Equal([42], entity.Components["WatchPos"]);
-
-        // Cleanup
-        _fixture.WatchManager.Cancel(watchId);
-        await dataSub.UnsubscribeAsync();
-        await coordNats.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task WatchDataPush_IncludesSystemsOnFirstPush()
-    {
-        // Register a system directly
-        _fixture.Registry.Register(new SystemDescriptor
-        {
-            Name = "WatchSysTest",
-            InstanceId = Guid.NewGuid().ToString(),
-            Queries = [new QueryDescriptor
-            {
-                RequiredTypes = ["WA", "WB"],
-                ReadTypes = ["WA"],
-                WriteTypes = ["WB"]
-            }]
-        });
-        _fixture.WatchManager.NotifySystemsChanged();
-
-        // Subscribe a watch
-        var watchId = Guid.NewGuid();
-        _fixture.WatchManager.Register(new WatchRequest
+        var watchId = Guid.NewGuid().ToString("N");
+        var response = await Subscribe(nats, new WatchRequest
         {
             WatchId = watchId,
             IncludeSystems = true,
-            IncludeEntities = false
+            IncludeEntities = true,
         });
 
-        // First call should include systems
-        var spec = _fixture.WatchManager.GetActiveWatches().First(w => w.WatchId == watchId);
-        Assert.True(_fixture.WatchManager.ShouldIncludeSystems(spec));
+        var subscription = await nats.SubscribeCoreAsync<byte[]>(response.DataSubject);
+        try
+        {
+            // The tick loop is not running in this fixture, so push one frame by hand —
+            // the same call the loop makes.
+            var spec = fixture.WatchManager.ActiveWatches().Single(w => w.WatchId == watchId);
+            var data = new WatchData { WatchId = watchId, Tick = 42 };
+            if (fixture.WatchManager.ClaimSchemas(spec, fixture.Schemas.Version))
+                data.ComponentTypes.AddRange(fixture.Handlers.DescribeTypes());
+            data.Entities.AddRange(fixture.Handlers.BuildEntitiesResponse(null, false).Entities);
 
-        // Cleanup
-        _fixture.WatchManager.Cancel(watchId);
+            await nats.PublishAsync(response.DataSubject, data.ToByteArray());
+
+            using var cts = new CancellationTokenSource(Timeout);
+            var message = await subscription.Msgs.ReadAsync(cts.Token);
+            var received = WatchData.Parser.ParseFrom(message.Data!);
+
+            Assert.Equal(42ul, received.Tick);
+            var snapshot = Assert.Single(received.Entities, e => e.Entity == entity);
+            var binding = Assert.Single(snapshot.Components, c => c.TypeId == typeId);
+            Assert.Equal(3.5f, Testing.V1.TestPosition.Parser.ParseFrom(binding.Payload).X);
+            Assert.Contains(received.ComponentTypes, t => t.TypeId == typeId);
+        }
+        finally
+        {
+            await subscription.UnsubscribeAsync();
+        }
     }
 
     [Fact]
-    public async Task WatchDataPush_OmitsSystemsWhenUnchanged()
+    public async Task SystemsAreSentOnceUntilTheyChange()
     {
-        _fixture.Registry.Register(new SystemDescriptor
-        {
-            Name = "StableWatch",
-            InstanceId = Guid.NewGuid().ToString(),
-            Queries = [new QueryDescriptor
-            {
-                RequiredTypes = ["WStable"],
-                WriteTypes = ["WStable"]
-            }]
-        });
-        _fixture.WatchManager.NotifySystemsChanged();
+        fixture.EnsureAvailable();
+        await using var nats = await fixture.ConnectAsync();
 
-        var watchId = Guid.NewGuid();
-        _fixture.WatchManager.Register(new WatchRequest
-        {
-            WatchId = watchId,
-            IncludeSystems = true,
-            IncludeEntities = false
-        });
+        var watchId = Guid.NewGuid().ToString("N");
+        await Subscribe(nats, new WatchRequest { WatchId = watchId, IncludeSystems = true });
 
-        // First push — should include systems
-        var spec = _fixture.WatchManager.GetActiveWatches().First(w => w.WatchId == watchId);
-        Assert.True(_fixture.WatchManager.ShouldIncludeSystems(spec));
+        var spec = fixture.WatchManager.ActiveWatches().Single(w => w.WatchId == watchId);
 
-        // Second push — should NOT include systems (no change)
-        spec = _fixture.WatchManager.GetActiveWatches().First(w => w.WatchId == watchId);
-        Assert.False(_fixture.WatchManager.ShouldIncludeSystems(spec));
+        Assert.True(fixture.WatchManager.ClaimSystems(spec));
+        Assert.False(fixture.WatchManager.ClaimSystems(spec));
 
-        // Cleanup
-        _fixture.WatchManager.Cancel(watchId);
+        fixture.WatchManager.NotifySystemsChanged();
+        Assert.True(fixture.WatchManager.ClaimSystems(spec));
     }
 }
